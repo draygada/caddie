@@ -113,3 +113,34 @@ def test_root_contract_equirectangular_formula_agrees_to_one_meter(geo_points):
         east = (p["lon"] - o["lon"]) * 111320 * np.cos(np.radians(o["lat"]))
         x, y = rotate(east, north, rot)
         assert abs(x - p["x"]) < 1.0 and abs(y - p["y"]) < 1.0, p
+
+
+# slice 3 -------------------------------------------------------------------
+
+LIE_KINDS = ("tee", "fairway", "rough", "bunker", "green")
+
+
+@pytest.mark.parametrize("hole", [10, 11, 12])
+def test_extract_hole_features_has_required_kinds(osm, hole):
+    from caddie.geometry import extract_hole_features
+
+    feats = extract_hole_features(osm, hole)
+    assert set(feats) == set(LIE_KINDS)
+    assert len(feats["green"]) == 1
+    assert len(feats["fairway"]) >= 1
+    assert len(feats["tee"]) >= 1
+    for kind in LIE_KINDS:
+        for poly in feats[kind]:
+            assert poly.geom_type == "Polygon" and poly.is_valid
+
+
+def test_no_polygon_assigned_to_two_holes(osm):
+    from caddie.geometry import extract_hole_features
+
+    seen: dict[tuple[float, float], int] = {}
+    for hole in (10, 11, 12):
+        for kind in LIE_KINDS:
+            for poly in extract_hole_features(osm, hole)[kind]:
+                key = tuple(round(v, 9) for v in poly.representative_point().coords[0])
+                assert key not in seen, f"polygon in hole {hole} already in hole {seen[key]}"
+                seen[key] = hole
