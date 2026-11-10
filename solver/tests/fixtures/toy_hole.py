@@ -81,3 +81,94 @@ def toy_hole(hazards: bool = True) -> Hole:
         lie=lie,
         drop_index=compute_drop_index(lie, tee_xy, CELL_M),
     )
+
+
+MAX_SHOTS = 30
+
+
+def brute_force_value_at_tee(
+    mode: str, n: int = 20000, rng: np.random.Generator | None = None
+) -> float:
+    """Mean strokes to hole out from the tee with the policy "aim at the pin with test7i".
+
+    Independent Monte Carlo (fresh draws, continuous aim), not the Halton
+    tables, so it cross-checks the transition rules. Not optimal: value
+    iteration must do at least as well.
+    """
+    from caddie.dispersion import MISHIT_MEAN
+
+    rng = np.random.default_rng(0) if rng is None else rng
+    hole = toy_hole()
+    player = toy_player()
+    club = player.clubs[TOY_CLUB]
+    flat = hole.lie.reshape(-1)
+    px, py = hole.pin_xy
+    roll_by_lie = np.zeros(8)
+    for code, name in ((1, "tee"), (2, "fairway"), (3, "rough"), (4, "bunker")):
+        roll_by_lie[code] = player.lie[name]["roll"]
+    roll_by_lie[5] = 1.0
+    sigma_by_lie = np.ones(8)
+    carry_by_lie = np.ones(8)
+    for code, name in ((1, "tee"), (2, "fairway"), (3, "rough"), (4, "bunker")):
+        sigma_by_lie[code] = player.lie[name]["sigma"]
+        carry_by_lie[code] = player.lie[name]["carry"]
+
+    def locate(x, y):
+        r = np.floor(y / CELL_M).astype(int)
+        c = np.floor(x / CELL_M).astype(int)
+        outside = (r < 0) | (r >= ROWS) | (c < 0) | (c >= COLS)
+        idx = np.clip(r, 0, ROWS - 1) * COLS + np.clip(c, 0, COLS - 1)
+        lie = flat[idx].astype(int)
+        lie = np.where(outside | (lie == 0), 7, lie)
+        return idx, lie
+
+    tee_idx = int(hole.tee_xy[1] // CELL_M) * COLS + int(hole.tee_xy[0] // CELL_M)
+    idx = np.full(n, tee_idx)
+    strokes = np.zeros(n)
+    active = np.ones(n, dtype=bool)
+    playable_idx = np.flatnonzero(np.isin(flat, [1, 2, 3, 4, 5]))
+    pr, pc = np.divmod(playable_idx, COLS)
+    playable_xy = np.column_stack(((pc + 0.5) * CELL_M, (pr + 0.5) * CELL_M))
+    for _ in range(MAX_SHOTS):
+        if not active.any():
+            break
+        a = np.flatnonzero(active)
+        r, c = np.divmod(idx[a], COLS)
+        x, y = (c + 0.5) * CELL_M, (r + 0.5) * CELL_M
+        lie = flat[idx[a]].astype(int)
+        aim = np.degrees(np.arctan2(px - x, py - y))
+        theta = club.sigma_theta_deg * sigma_by_lie[lie] * rng.standard_normal(a.size)
+        z = rng.standard_normal(a.size)
+        xmix = np.where(rng.random(a.size) < club.p, z + MISHIT_MEAN, z)
+        carry = club.mu_c * carry_by_lie[lie] * (1 + club.sigma_d * sigma_by_lie[lie] * xmix)
+        b = np.radians(aim + theta)
+        lx, ly = x + carry * np.sin(b), y + carry * np.cos(b)
+        _, land_lie = locate(lx, ly)
+        run = (
+            (club.mu_r + club.sigma_r * rng.standard_normal(a.size))
+            * roll_by_lie[lie]
+            * roll_by_lie[land_lie]
+        )
+        ux, uy = np.sin(np.radians(aim)), np.cos(np.radians(aim))
+        fx, fy = lx + ux * run, ly + uy * run
+        fidx, flie = locate(fx, fy)
+        hazard = (flie == 6) | (flie == 7)
+        strokes[a] += np.where(hazard & (mode != "mulligan"), 2.0, 1.0)
+        nxt = fidx.copy()
+        if mode in ("mulligan", "replay"):
+            nxt[hazard] = idx[a][hazard]
+        else:
+            water = flie == 6
+            nxt[water] = hole.drop_index.reshape(-1)[fidx[water]]
+            ob = flie == 7
+            if ob.any():
+                d = np.hypot(
+                    playable_xy[:, 0][None] - fx[ob][:, None],
+                    playable_xy[:, 1][None] - fy[ob][:, None],
+                )
+                nxt[ob] = playable_idx[np.argmin(d, axis=1)]
+        idx[a] = nxt
+        on_green = flat[nxt] == 5
+        strokes[a[on_green]] += FlatPutting.expected
+        active[a[on_green]] = False
+    return float(strokes.mean())

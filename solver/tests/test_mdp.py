@@ -297,3 +297,40 @@ def test_candidate_actions_prunes_long_clubs():
         far.shape == (91, 2) and np.all(far[:, 0] == 0) and np.array_equal(far[:, 1], np.arange(91))
     )
     assert near.shape == (91, 2)  # never empty: the shortest club stays
+
+
+# slice 7: brute-force fixture
+
+
+def test_brute_force_value_at_tee_replay():
+    from tests.fixtures.toy_hole import brute_force_value_at_tee
+
+    v1 = brute_force_value_at_tee("replay", n=20000, rng=np.random.default_rng(42))
+    v2 = brute_force_value_at_tee("replay", n=20000, rng=np.random.default_rng(42))
+    assert v1 == v2
+    assert np.isfinite(v1) and v1 > 2.0
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="part file asks for 3 < E[strokes] < 6 under replay, but with the toy club "
+    "(25 m carry, 2 m roll) every full shot from row 5 flies past the top of the grid, "
+    "which is OB, and replay rehits from row 5; the aim-at-pin policy scores about 8.3. "
+    "Needs a decision on the toy hole or the band",
+)
+def test_brute_force_replay_in_part_file_band():
+    from tests.fixtures.toy_hole import brute_force_value_at_tee
+
+    v = brute_force_value_at_tee("replay", n=20000, rng=np.random.default_rng(42))
+    assert 3.0 < v < 6.0, v
+
+
+def test_brute_force_other_modes_finite():
+    from tests.fixtures.toy_hole import brute_force_value_at_tee
+
+    vals = {
+        m: brute_force_value_at_tee(m, n=5000, rng=np.random.default_rng(1))
+        for m in ("mulligan", "drop", "replay")
+    }
+    assert all(np.isfinite(v) and v > 2.0 for v in vals.values()), vals
+    assert vals["mulligan"] <= vals["replay"]
