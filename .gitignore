@@ -1,0 +1,18 @@
+# Python (solver/)
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+solver/out/
+
+# Node (app/)
+node_modules/
+app/dist/
+app/dev-dist/
+
+# Editors and OS
+.DS_Store
+.idea/
+.vscode/
+*.log
