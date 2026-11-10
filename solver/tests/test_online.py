@@ -2,13 +2,24 @@
 
 from __future__ import annotations
 
+import json
+import math
+from pathlib import Path
+
 import numpy as np
 import pytest
 
 from caddie.mdp import DIRECTIONS_DEG, Lie
-from caddie.online import bilinear, recommend
+from caddie.online import (
+    bilinear,
+    mulberry32,
+    normal,
+    recommend,
+    sample_landing,
+    write_shot_samples,
+)
 from caddie.value_iteration import solve
-from tests.fixtures.toy_hole import toy_hole, toy_player
+from tests.fixtures.toy_hole import TOY_CLUB, toy_hole, toy_player
 
 # --- slice 1: bilinear --------------------------------------------------------------------------
 
@@ -174,3 +185,72 @@ def test_lie_override_rough_costs_more_than_the_fairway(toy_drop):
     assert rough.expected_strokes > fairway.expected_strokes
     assert bunker.expected_strokes > fairway.expected_strokes
     assert fairway.club == rough.club == bunker.club
+
+
+# --- slice 5: fixture for the TS port --------------------------------------------------------
+
+FIXTURE_PATH = Path(__file__).resolve().parents[2] / "docs" / "fixtures" / "shot_samples.json"
+
+
+def test_mulberry32_is_deterministic_and_uniform():
+    a, b = mulberry32(42), mulberry32(42)
+    xs = [a() for _ in range(1000)]
+    assert [b() for _ in range(1000)] == xs
+    assert all(0.0 <= u < 1.0 for u in xs)
+    assert 0.4 < sum(xs) / len(xs) < 0.6
+    assert mulberry32(43)() != xs[0]
+
+
+def test_box_muller_consumes_two_uniforms_per_normal():
+    calls = []
+
+    def rng():
+        calls.append(1)
+        return 0.5
+
+    z = normal(rng)
+    assert len(calls) == 2
+    assert z == pytest.approx(math.sqrt(-2 * math.log(0.5)) * math.cos(math.pi))
+
+
+def test_sample_landing_draw_order_and_formula():
+    hole, player = toy_hole(), toy_player()
+    club = player.clubs[TOY_CLUB]
+    seq = iter([0.5, 0.5, 0.9, 0.5, 0.5, 0.5, 0.5])  # theta normal, u, x normal, roll normal
+    rng = lambda: next(seq)  # noqa: E731
+    shot = sample_landing(hole, player, club, (25.0, 25.0), Lie.FAIRWAY, 10.0, "replay", rng)
+    # every normal is sqrt(-2 ln 0.5) cos(pi) = -1.1774; u = 0.9 > p so no mishit
+    z = math.sqrt(-2 * math.log(0.5)) * math.cos(math.pi)
+    theta = club.sigma_theta_deg * z
+    carry = club.mu_c * (1 + club.sigma_d * z)
+    bearing = math.degrees(math.atan2(hole.pin_xy[0] - 25.0, hole.pin_xy[1] - 25.0))
+    a = math.radians(bearing + 10.0 + theta)
+    assert shot["land"][0] == pytest.approx(25.0 + carry * math.sin(a))
+    assert shot["land"][1] == pytest.approx(25.0 + carry * math.cos(a))
+    roll = (club.mu_r + club.sigma_r * z) * 1.0
+    ua = math.radians(bearing + 10.0)
+    assert shot["to"][0] == pytest.approx(shot["land"][0] + roll * math.sin(ua))
+    assert shot["to"][1] == pytest.approx(shot["land"][1] + roll * math.cos(ua))
+    r, c = int(shot["to"][1] // 5), int(shot["to"][0] // 5)
+    assert shot["lie"] == int(hole.lie[r, c]) == int(Lie.GREEN)  # it carries onto the green
+    assert shot["reward"] == -1.0
+    assert shot["next"] == shot["to"]
+
+
+def test_write_shot_samples_fixture():
+    doc = write_shot_samples(FIXTURE_PATH)
+    assert FIXTURE_PATH.exists()
+    on_disk = json.loads(FIXTURE_PATH.read_text())
+    assert on_disk == doc
+    assert doc["seed"] == 42 and doc["from"] == [25, 25] and doc["dir_deg"] == 10
+    assert doc["mode"] == "replay" and doc["club"]["mu_c"] == 25.0
+    assert len(doc["uniforms"]) == 3 and len(doc["landings"]) == 20
+    rng = mulberry32(42)
+    assert doc["uniforms"] == [rng(), rng(), rng()]
+    # the landings are the resting points of 20 consecutive shots from (25, 25) on one rng
+    rng = mulberry32(42)
+    hole, player = toy_hole(), toy_player()
+    club = player.clubs[TOY_CLUB]
+    for x, y in doc["landings"]:
+        shot = sample_landing(hole, player, club, (25.0, 25.0), Lie.FAIRWAY, 10.0, "replay", rng)
+        assert [round(shot["to"][0], 4), round(shot["to"][1], 4)] == [x, y]

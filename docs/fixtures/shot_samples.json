@@ -1,0 +1,129 @@
+{
+  "note": "Part 06 slice 5. mulberry32(seed) uniforms; normal = Box-Muller with two uniforms per call, sqrt(-2 ln(1 - u1)) cos(2 pi u2); per shot draw order: theta normal, u for the mishit mixture, carry normal, roll normal. Landings are resting points after roll, before the terrain rule, from the toy hole.",
+  "seed": 42,
+  "uniforms": [
+    0.6011037519201636,
+    0.44829055899754167,
+    0.8524657934904099
+  ],
+  "club": {
+    "name": "test7i",
+    "mu_c": 25.0,
+    "sigma_theta_deg": 4.0,
+    "sigma_d": 0.05,
+    "p": 0.05,
+    "mu_r": 2.0,
+    "sigma_r": 1.0
+  },
+  "lie": "fairway",
+  "from": [
+    25,
+    25
+  ],
+  "dir_deg": 10,
+  "mode": "replay",
+  "landings": [
+    [
+      30.0207,
+      50.3543
+    ],
+    [
+      34.2129,
+      50.5034
+    ],
+    [
+      31.3223,
+      50.9575
+    ],
+    [
+      31.7606,
+      49.6348
+    ],
+    [
+      33.5152,
+      47.2563
+    ],
+    [
+      33.7669,
+      48.658
+    ],
+    [
+      31.5178,
+      48.4986
+    ],
+    [
+      34.1604,
+      51.7614
+    ],
+    [
+      28.3878,
+      50.295
+    ],
+    [
+      30.982,
+      50.8048
+    ],
+    [
+      33.6975,
+      50.2297
+    ],
+    [
+      28.9591,
+      50.6322
+    ],
+    [
+      31.1299,
+      51.2181
+    ],
+    [
+      32.2114,
+      51.7468
+    ],
+    [
+      31.9784,
+      51.5907
+    ],
+    [
+      32.9729,
+      50.6079
+    ],
+    [
+      33.8498,
+      49.0303
+    ],
+    [
+      34.7777,
+      52.1046
+    ],
+    [
+      30.1596,
+      50.9736
+    ],
+    [
+      31.8532,
+      50.7862
+    ]
+  ],
+  "landing_lies": [
+    7,
+    7,
+    7,
+    5,
+    5,
+    5,
+    5,
+    7,
+    7,
+    7,
+    7,
+    7,
+    7,
+    7,
+    7,
+    7,
+    5,
+    7,
+    7,
+    7
+  ]
+}
