@@ -45,3 +45,16 @@ def load_make_table(path: Path) -> tuple[np.ndarray, np.ndarray]:
     order = np.argsort(mids_m)
     log.info("loaded %d putting bins from %s", len(rows), path)
     return mids_m[order], probs[order]
+
+
+def make_prob(d_m: float | np.ndarray, mids_m: np.ndarray, probs: np.ndarray) -> np.ndarray:
+    """Make probability at distance ``d_m`` (meters).
+
+    Linear interpolation through (0, 1.0) and the bin midpoints; clamped at
+    the last bin's probability beyond the last midpoint. Negative distances
+    are treated as 0.
+    """
+    xs = np.concatenate(([0.0], np.asarray(mids_m, dtype=float)))
+    ys = np.concatenate(([1.0], np.asarray(probs, dtype=float)))
+    d = np.maximum(np.asarray(d_m, dtype=float), 0.0)
+    return np.interp(d, xs, ys)
