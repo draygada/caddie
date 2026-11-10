@@ -171,3 +171,81 @@ def test_step_batch_same_result_every_mode_without_hazards(tables):
     for a in outs[1:]:
         assert np.array_equal(a[0], outs[0][0]) and np.array_equal(a[1], outs[0][1])
     assert player.club_order[0] == TOY_CLUB
+
+
+# slice 5: terrain rules
+
+
+def _hazard_runs(from_rc, dir_idx, tables):
+    h = toy_hole(hazards=True)
+    player = toy_player()
+    from_idx = np.array([from_rc[0] * h.cols + from_rc[1]])
+    from_lie = h.lie.reshape(-1)[from_idx]
+    out = {
+        m: step_batch(h, player, from_idx, from_lie, 0, dir_idx, tables, m)
+        for m in ("mulligan", "drop", "replay")
+    }
+    hazard = out["replay"][1][0] == -2.0
+    return h, from_idx[0], out, hazard
+
+
+def test_water_rules(tables):
+    # from (2, 1) straight up +y: carry 25 m lands around y = 39.5, row 7, cols 0 to 3 is water
+    h, origin, out, hazard = _hazard_runs((2, 1), DIR0, tables)
+    assert 0.5 < hazard.mean() < 1.0, hazard.mean()
+    flat = h.lie.reshape(-1)
+    nxt, rew = out["mulligan"]
+    assert np.all(rew == -1.0)
+    assert np.all(nxt[0][hazard] == origin)
+    assert np.all(flat[nxt[0][~hazard]] != Lie.WATER)
+    nxt, rew = out["replay"]
+    assert np.all(rew[0][hazard] == -2.0) and np.all(rew[0][~hazard] == -1.0)
+    assert np.all(nxt[0][hazard] == origin)
+    nxt, rew = out["drop"]
+    assert np.all(rew[0][hazard] == -2.0)
+    drop_rows = nxt[0][hazard] // h.cols
+    assert np.all(drop_rows <= 7)
+    assert np.all(np.isin(flat[nxt[0][hazard]], [int(Lie.FAIRWAY), int(Lie.ROUGH)]))
+    # the same draws are hazards in every mode
+    assert np.array_equal(out["mulligan"][0][0] == origin, hazard)
+
+
+def test_ob_rules(tables):
+    # from (2, 8) aiming 10 degrees right: most draws end in col 9 (OB) or off the grid
+    h, origin, out, hazard = _hazard_runs((2, 8), DIR0 + 5, tables)
+    assert hazard.mean() > 0.5, hazard.mean()
+    flat = h.lie.reshape(-1)
+    nxt, rew = out["mulligan"]
+    assert np.all(rew == -1.0) and np.all(nxt[0][hazard] == origin)
+    nxt, rew = out["replay"]
+    assert np.all(rew[0][hazard] == -2.0) and np.all(nxt[0][hazard] == origin)
+    nxt, rew = out["drop"]
+    assert np.all(rew[0][hazard] == -2.0)
+    dropped = nxt[0][hazard]
+    assert np.all((dropped >= 0) & (dropped < h.rows * h.cols))
+    assert np.all(
+        np.isin(
+            flat[dropped],
+            [int(v) for v in (Lie.FAIRWAY, Lie.ROUGH, Lie.TEE, Lie.BUNKER, Lie.GREEN)],
+        )
+    )
+    assert np.all(dropped % h.cols == 8)  # nearest playable column to the OB strip
+
+
+def test_bunker_landing_stops_roll(tables):
+    # from (0, 4) straight up: carry 25 m lands in row 5 (bunker at cols 4, 5); roll x0 there
+    h = toy_hole(hazards=True)
+    player = toy_player()
+    from_idx = np.array([4])
+    nxt, rew = step_batch(
+        h, player, from_idx, h.lie.reshape(-1)[from_idx], 0, DIR0, tables, "replay"
+    )
+    flat = h.lie.reshape(-1)
+    assert np.all(rew == -1.0)
+    assert np.mean(flat[nxt[0]] == Lie.BUNKER) > 0.3
+
+
+def test_step_batch_rejects_bad_mode(tables):
+    h = toy_hole()
+    with pytest.raises(ValueError, match="penalty_mode"):
+        step_batch(h, toy_player(), np.array([5]), np.array([2]), 0, DIR0, tables, "none")  # type: ignore[arg-type]
