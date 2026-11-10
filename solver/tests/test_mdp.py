@@ -13,8 +13,9 @@ from caddie.mdp import (
     build_offset_tables,
     landing_offsets,
     make_draws,
+    step_batch,
 )
-from tests.fixtures.toy_hole import toy_player
+from tests.fixtures.toy_hole import TOY_CLUB, toy_hole, toy_player
 
 # slice 1: Lie enum, directions, draws
 
@@ -128,3 +129,45 @@ def test_offset_tables_direction_axis(tables):
     assert tables.dx[0, fw, 0].mean() < -20  # dir -90 is to the left
     assert tables.dx[0, fw, 90].mean() > 20
     assert tables.dy[0, fw, 45].mean() > 20
+
+
+# slice 4: step_batch, no hazards
+
+DIR0 = 45  # index of direction 0 in DIRECTIONS_DEG
+
+
+def test_toy_hole_layout():
+    h = toy_hole(hazards=False)
+    assert h.lie.shape == (10, 10) and h.pin_xy == (27.5, 47.5)
+    assert (h.lie == Lie.GREEN).sum() == 6
+    assert set(np.unique(h.lie)) == {int(Lie.FAIRWAY), int(Lie.GREEN)}
+
+
+def test_step_batch_no_hazards(tables):
+    h = toy_hole(hazards=False)
+    player = toy_player()
+    from_idx = np.array([5, 4])  # tee row, cols 5 and 4
+    from_lie = h.lie.reshape(-1)[from_idx]
+    nxt, rew = step_batch(h, player, from_idx, from_lie, 0, DIR0, tables, "replay")
+    assert nxt.shape == rew.shape == (2, 200)
+    assert nxt.dtype.kind == "i"
+    assert np.all(rew == -1.0)
+    rows = nxt // h.cols
+    frac = np.mean((rows >= 4) & (rows <= 6))
+    assert frac >= 0.95, frac
+    cols = nxt % h.cols
+    assert abs(cols[0].mean() - 5) < 0.5 and abs(cols[1].mean() - 4) < 0.5
+
+
+def test_step_batch_same_result_every_mode_without_hazards(tables):
+    h = toy_hole(hazards=False)
+    player = toy_player()
+    from_idx = np.arange(1, 9)  # inner columns: edge columns can leave the grid
+    from_lie = h.lie.reshape(-1)[from_idx]
+    outs = [
+        step_batch(h, player, from_idx, from_lie, 0, DIR0, tables, m)
+        for m in ("mulligan", "drop", "replay")
+    ]
+    for a in outs[1:]:
+        assert np.array_equal(a[0], outs[0][0]) and np.array_equal(a[1], outs[0][1])
+    assert player.club_order[0] == TOY_CLUB
