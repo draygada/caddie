@@ -1,9 +1,17 @@
 """Tests for caddie.value_iteration (part 05)."""
 
+import json
+import logging
+import time
+from pathlib import Path
+
 import numpy as np
 import pytest
 
+from caddie.dispersion import ClubParams, Player
+from caddie.geometry import build_hole
 from caddie.mdp import DIRECTIONS_DEG, Lie, build_offset_tables, make_draws, pin_bearing_deg
+from caddie.putting import build_putting_table
 from caddie.value_iteration import (
     Solution,
     all_actions,
@@ -11,6 +19,7 @@ from caddie.value_iteration import (
     initial_values,
     solve,
     state_mask,
+    write_value_png,
 )
 from tests.fixtures.toy_hole import brute_force_value_at_tee, toy_hole, toy_player
 
@@ -178,3 +187,59 @@ def test_mode_ordering_against_replay(solutions):
 )
 def test_mulligan_no_worse_than_drop_per_part_file(solutions):
     assert solutions["mulligan"].U[TEE_IDX] <= solutions["drop"].U[TEE_IDX] + 1e-6
+
+
+# slice 5: hole 10 end to end
+
+SOLVER_DIR = Path(__file__).resolve().parents[1]
+SAMPLE_PLAYER = SOLVER_DIR / "out" / "player.sample.json"
+
+
+def player_from_json(doc: dict) -> Player:
+    """Point estimates only; part 08 owns the full round trip."""
+    clubs = {
+        name: ClubParams(
+            mu_c=v["mu_c"],
+            sigma_theta_deg=v["sigma_theta_deg"],
+            sigma_d=v["sigma_d"],
+            p=v["p"],
+            mu_r=v["mu_r"],
+            sigma_r=v["sigma_r"],
+            sampled=v["sampled"],
+            stats=None,
+        )
+        for name, v in doc["clubs"].items()
+    }
+    putting = build_putting_table(SOLVER_DIR / "data" / "raw" / "putting.csv")
+    return Player(doc["handicap"], clubs, doc["club_order"], doc["lie"], putting)
+
+
+@pytest.mark.skipif(not SAMPLE_PLAYER.exists(), reason="run tests/test_dispersion.py first")
+def test_hole_10_drop_end_to_end(caplog):
+    caplog.set_level(logging.INFO, logger="caddie.value_iteration")
+    player = player_from_json(json.loads(SAMPLE_PLAYER.read_text()))
+    hole = build_hole(
+        10,
+        SOLVER_DIR / "data" / "raw" / "osm_stanford.geojson",
+        SOLVER_DIR / "data" / "raw" / "traced_10.geojson",
+        holes_dir=SOLVER_DIR / "data" / "holes",
+        out_dir=SOLVER_DIR / "out",
+    )
+    t0 = time.perf_counter()
+    s = solve(hole, player, "drop", K=200, tol=0.01, max_sweeps=100, seed=0, log_every=1)
+    elapsed = time.perf_counter() - t0
+    assert s.residual_history[-1] < 0.01 and s.sweeps < 100
+    vi_logs = [
+        r for r in caplog.records if r.name == "caddie.value_iteration" and "sweep" in r.message
+    ]
+    assert len(vi_logs) == s.sweeps
+    playable, terminal = state_mask(hole)
+    assert np.all(np.isfinite(s.U[playable])) and np.all(s.U[playable] > 1.0)
+    tee = int(hole.tee_xy[1] // hole.cell_m) * hole.cols + int(hole.tee_xy[0] // hole.cell_m)
+    assert playable[tee] and s.U[tee] < hole.par + 4
+    out = SOLVER_DIR / "out" / "10_drop_value.png"
+    write_value_png(s, hole, out, arrow_every=3)
+    assert out.exists() and out.stat().st_size > 10_000
+    logging.getLogger(__name__).info(
+        "hole 10 drop: tee %.2f strokes, %d sweeps, %.0f s", s.U[tee], s.sweeps, elapsed
+    )

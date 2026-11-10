@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import numpy as np
 
@@ -27,6 +28,7 @@ from caddie.mdp import (
     PenaltyMode,
     build_offset_tables,
     make_draws,
+    pin_bearing_deg,
     step_batch,
     terminal_values,
 )
@@ -34,6 +36,7 @@ from caddie.mdp import (
 log = logging.getLogger(__name__)
 
 NO_ACTION = 255
+LIE_PLOT = {"water": int(Lie.WATER), "ob": int(Lie.OB), "bunker": int(Lie.BUNKER)}
 PLAYABLE_LIES = (Lie.TEE, Lie.FAIRWAY, Lie.ROUGH, Lie.BUNKER)
 
 
@@ -179,3 +182,62 @@ def solve(
         sweeps=sweeps,
         residual_history=history,
     )
+
+
+def write_value_png(solution: Solution, hole: Hole, path: Path, arrow_every: int = 3) -> None:
+    """Heatmap of strokes-to-go with greedy aim arrows every ``arrow_every`` cells.
+
+    Arrows point along the absolute aim (pin bearing plus the relative direction) and
+    are scaled by the chosen club's mean carry.
+    """
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    grid = solution.U.reshape(hole.rows, hole.cols)
+    extent = (0.0, hole.cols * hole.cell_m, 0.0, hole.rows * hole.cell_m)
+    fig, ax = plt.subplots(figsize=(6, 6 * hole.rows / hole.cols + 1))
+    im = ax.imshow(grid, origin="lower", extent=extent, cmap="viridis_r")
+    fig.colorbar(im, ax=ax, label="expected strokes to hole out")
+    for kind, colour in (("water", "deepskyblue"), ("ob", "white"), ("bunker", "khaki")):
+        mask = hole.lie == LIE_PLOT[kind]
+        if mask.any():
+            ax.contour(
+                mask.astype(float),
+                levels=[0.5],
+                colors=colour,
+                extent=extent,
+                origin="lower",
+                linewidths=0.8,
+            )
+    rr, cc = np.meshgrid(
+        np.arange(0, hole.rows, arrow_every), np.arange(0, hole.cols, arrow_every), indexing="ij"
+    )
+    idx = (rr * hole.cols + cc).ravel()
+    idx = idx[solution.dir[idx] != NO_ACTION]
+    x, y = (idx % hole.cols + 0.5) * hole.cell_m, (idx // hole.cols + 0.5) * hole.cell_m
+    bearing = pin_bearing_deg(hole, x, y) + DIRECTIONS_DEG[solution.dir[idx]]
+    length = np.full(idx.shape, 2.0 * hole.cell_m)
+    ax.quiver(
+        x,
+        y,
+        length * np.sin(np.radians(bearing)),
+        length * np.cos(np.radians(bearing)),
+        angles="xy",
+        scale_units="xy",
+        scale=1,
+        color="white",
+        width=0.004,
+    )
+    ax.plot(*hole.tee_xy, "w^", ms=9)
+    ax.plot(*hole.pin_xy, "r*", ms=11)
+    ax.set_title(f"hole {solution.hole} {solution.mode}: strokes-to-go, {solution.sweeps} sweeps")
+    ax.set_xlabel("x (m)")
+    ax.set_ylabel("y (m)")
+    fig.tight_layout()
+    fig.savefig(path, dpi=110)
+    plt.close(fig)
+    log.info("wrote %s", path)
