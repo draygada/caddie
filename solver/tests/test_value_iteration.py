@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from caddie.mdp import DIRECTIONS_DEG, Lie, build_offset_tables, make_draws
+from caddie.mdp import DIRECTIONS_DEG, Lie, build_offset_tables, make_draws, pin_bearing_deg
 from caddie.value_iteration import (
     Solution,
     all_actions,
@@ -93,17 +93,7 @@ def test_solve_converges(replay_solution):
     assert len(s.residual_history) == s.sweeps
     assert s.residual_history[-1] < 0.01
     assert np.all(np.diff(s.residual_history[3:]) <= 1e-9)
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="part file asks for convergence under 60 sweeps; the toy hole's one 25 m club "
-    "and pin on the last row make the cells beside the green near-absorbing traps under "
-    "replay (about 0.94 return probability), so the residual shrinks by only about 4 "
-    "percent per sweep and tol 0.01 takes about 110 sweeps. Needs a decision on the toy hole",
-)
-def test_solve_converges_under_60_sweeps_per_part_file(replay_solution):
-    assert replay_solution.sweeps < 60
+    assert s.sweeps < 60
 
 
 def test_solve_drop_converges_fast():
@@ -157,11 +147,15 @@ def test_tee_shots_aim_around_the_bunkers(solutions, mode):
 
 @pytest.mark.parametrize("mode", ["mulligan", "drop", "replay"])
 def test_column_8_aims_left_of_the_ob(solutions, mode):
+    # directions are relative to the pin bearing, so "aims left" means the absolute aim
+    # (bearing + direction) points left of +y, away from the OB column
     s = solutions[mode]
     hole = toy_hole()
     for r in range(hole.rows):
         if hole.lie[r, 8] in (1, 2, 3, 4):
-            assert _dir_deg(s, r, 8) < 0.0, (r, 8)
+            x, y = (8 + 0.5) * hole.cell_m, (r + 0.5) * hole.cell_m
+            bearing = float(pin_bearing_deg(hole, np.array([x]), np.array([y]))[0])
+            assert bearing + _dir_deg(s, r, 8) < 0.0, (r, 8)
 
 
 # slice 4: mode ordering
