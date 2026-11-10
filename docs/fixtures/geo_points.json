@@ -1,0 +1,35 @@
+{
+  "hole": 11,
+  "note": "origin = Black tee centroid (OSM way 798923045); xy via pyproj AEQD + rotation in solver/caddie/geometry.py; the root CLAUDE.md equirectangular formula lands within 1 m of these; hand-check in geojson.io pending",
+  "origin": {
+    "lon": -122.1846281,
+    "lat": 37.4185109
+  },
+  "rotation_deg": 327.565,
+  "points": [
+    {
+      "name": "pin (green centroid)",
+      "osm_id": 798923050,
+      "lon": -122.1865214,
+      "lat": 37.4208871,
+      "x": 0.001,
+      "y": 312.463
+    },
+    {
+      "name": "centerline middle vertex",
+      "osm_id": 1137961762,
+      "lon": -122.1860739,
+      "lat": 37.4199986,
+      "x": -19.46,
+      "y": 207.994
+    },
+    {
+      "name": "greenside bunker centroid",
+      "osm_id": 798923048,
+      "lon": -122.1863541,
+      "lat": 37.4208316,
+      "x": 9.194,
+      "y": 299.328
+    }
+  ]
+}
