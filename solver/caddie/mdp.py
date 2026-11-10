@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from enum import IntEnum
-from typing import Literal
+from typing import Literal, Protocol
 
 import numpy as np
 from scipy.spatial import cKDTree
@@ -23,6 +23,7 @@ from scipy.stats import norm, qmc
 
 from caddie.dispersion import MISHIT_MEAN, ClubParams, Player
 from caddie.geometry import Hole
+from caddie.putting import PuttingTable
 
 log = logging.getLogger(__name__)
 
@@ -36,6 +37,12 @@ class Lie(IntEnum):
     GREEN = 5
     WATER = 6
     OB = 7
+
+
+class PuttingCurve(Protocol):
+    """Anything callable on distance in meters, like :class:`PuttingTable`."""
+
+    def __call__(self, d_m: float | np.ndarray) -> np.ndarray: ...
 
 
 PenaltyMode = Literal["mulligan", "drop", "replay"]
@@ -249,3 +256,32 @@ def step_batch(
             _, nearest = tree.query(np.column_stack((fx[ob], fy[ob])))
             next_idx[ob] = playable[nearest]
     return next_idx.astype(np.int64), reward
+
+
+def terminal_values(hole: Hole, putting: PuttingTable | PuttingCurve) -> np.ndarray:
+    """(rows*cols,) value -E[putts](distance to pin) on green cells, NaN elsewhere."""
+    flat = hole.lie.reshape(-1)
+    u = np.full(flat.shape, np.nan)
+    green = np.flatnonzero(flat == Lie.GREEN)
+    x, y = cell_xy(hole, green)
+    dist = np.hypot(x - hole.pin_xy[0], y - hole.pin_xy[1])
+    u[green] = -np.asarray(putting(dist), dtype=float)
+    return u
+
+
+CANDIDATE_CARRY_FACTOR = 1.3
+
+
+def candidate_actions(hole: Hole, player: Player, from_xy: tuple[float, float]) -> np.ndarray:
+    """(n, 2) array of (club_idx, dir_idx) worth evaluating from ``from_xy``.
+
+    Keeps clubs with ``mu_c <= 1.3 * distance to pin`` and every direction;
+    the shortest club is always kept so the set is never empty.
+    """
+    dist = float(np.hypot(from_xy[0] - hole.pin_xy[0], from_xy[1] - hole.pin_xy[1]))
+    mu = np.array([player.clubs[name].mu_c for name in player.club_order])
+    keep = np.flatnonzero(mu <= CANDIDATE_CARRY_FACTOR * dist)
+    if keep.size == 0:
+        keep = np.array([int(np.argmin(mu))])
+    clubs, dirs = np.meshgrid(keep, np.arange(len(DIRECTIONS_DEG)), indexing="ij")
+    return np.column_stack((clubs.ravel(), dirs.ravel()))

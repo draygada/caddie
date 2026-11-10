@@ -11,9 +11,11 @@ from caddie.mdp import (
     Lie,
     OffsetTables,
     build_offset_tables,
+    candidate_actions,
     landing_offsets,
     make_draws,
     step_batch,
+    terminal_values,
 )
 from tests.fixtures.toy_hole import TOY_CLUB, toy_hole, toy_player
 
@@ -249,3 +251,49 @@ def test_step_batch_rejects_bad_mode(tables):
     h = toy_hole()
     with pytest.raises(ValueError, match="penalty_mode"):
         step_batch(h, toy_player(), np.array([5]), np.array([2]), 0, DIR0, tables, "none")  # type: ignore[arg-type]
+
+
+# slice 6: terminal values
+
+
+def test_terminal_values_on_green_only():
+    h = toy_hole()
+    u = terminal_values(h, toy_player().putting)
+    flat = h.lie.reshape(-1)
+    assert u.shape == (100,)
+    green = flat == Lie.GREEN
+    assert np.all(np.isnan(u[~green]))
+    assert np.all(u[green] == -1.5)  # flat putting table
+
+
+def test_terminal_values_increase_in_magnitude_with_distance():
+    from pathlib import Path
+
+    from caddie.putting import build_putting_table
+
+    h = toy_hole()
+    table = build_putting_table(
+        Path(__file__).resolve().parents[1] / "data" / "raw" / "putting.csv"
+    )
+    u = terminal_values(h, table)
+    flat = h.lie.reshape(-1)
+    green = np.flatnonzero(flat == Lie.GREEN)
+    r, c = np.divmod(green, h.cols)
+    dist = np.hypot((c + 0.5) * h.cell_m - h.pin_xy[0], (r + 0.5) * h.cell_m - h.pin_xy[1])
+    order = np.argsort(dist)
+    assert np.all(u[green] < 0)
+    assert np.all(np.diff(u[green][order]) <= 1e-12)
+    pin_idx = 9 * h.cols + 5
+    assert u[pin_idx] == pytest.approx(-float(table(0.0)))
+
+
+def test_candidate_actions_prunes_long_clubs():
+    h = toy_hole()
+    player = toy_player()
+    # toy club mu_c 25: allowed when 25 <= 1.3 * distance, i.e. distance >= 19.23 m
+    far = candidate_actions(h, player, (27.5, 2.5))
+    near = candidate_actions(h, player, (27.5, 40.0))
+    assert (
+        far.shape == (91, 2) and np.all(far[:, 0] == 0) and np.array_equal(far[:, 1], np.arange(91))
+    )
+    assert near.shape == (91, 2)  # never empty: the shortest club stays
