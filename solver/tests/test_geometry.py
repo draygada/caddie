@@ -242,3 +242,118 @@ def test_drop_index_minus_one_off_water(toy_lie):
     drop = compute_drop_index(toy_lie, tee_xy=(27.5, 2.5), cell_m=5.0)
     assert np.all(drop[toy_lie != LIE_CODE["water"]] == -1)
     assert np.count_nonzero(drop >= 0) == 4
+
+
+# slice 6 -------------------------------------------------------------------
+
+
+def _hole(number, tmp_path, traced=None):
+    from caddie.geometry import build_hole
+
+    return build_hole(
+        number,
+        OSM_PATH,
+        traced if traced is not None else DATA / "raw" / f"traced_{number}.geojson",
+        holes_dir=tmp_path / "holes",
+        out_dir=tmp_path / "out",
+    )
+
+
+@pytest.mark.parametrize("number", [10, 11, 12])
+def test_build_hole_grid_and_landmarks(number, tmp_path):
+    from caddie.geometry import LIE_CODE
+
+    h = _hole(number, tmp_path)
+    assert h.number == number and h.par == 4 and h.cell_m == 5.0
+    if number == 11:  # the part file's bounds are stated for hole 11
+        assert 60 <= h.rows <= 110, h.rows
+        assert 20 <= h.cols <= 50, h.cols
+    else:
+        assert 60 <= h.rows <= 130, h.rows
+        assert 20 <= h.cols <= 70, h.cols
+    assert h.lie.shape == (h.rows, h.cols) and h.lie.dtype == np.uint8
+    assert h.drop_index.shape == (h.rows, h.cols) and h.drop_index.dtype == np.int32
+
+    def cell(xy):
+        return int(xy[1] // h.cell_m), int(xy[0] // h.cell_m)
+
+    assert h.lie[cell(h.pin_xy)] == LIE_CODE["green"]
+    assert h.lie[cell(h.tee_xy)] == LIE_CODE["tee"]
+    assert h.pin_xy[1] > h.tee_xy[1]
+    assert abs(h.pin_xy[0] - h.tee_xy[0]) < 30
+    assert "black" in h.tees and h.tees["black"] == h.tee_xy
+    assert set(h.polygons_xy) >= {"fairway", "green", "bunker", "tee"}
+    assert (tmp_path / "holes" / f"{number}.geojson").exists()
+    assert (tmp_path / "out" / f"{number}_lie.png").exists()
+
+
+@pytest.mark.parametrize("number", [10, 12])
+def test_build_hole_finds_a_white_tee_where_osm_has_one(number, tmp_path):
+    h = _hole(number, tmp_path)
+    assert "white" in h.tees
+    # black is the longest tee: farther from the pin than white
+    d = lambda xy: np.hypot(xy[0] - h.pin_xy[0], xy[1] - h.pin_xy[1])  # noqa: E731
+    assert d(h.tees["black"]) > d(h.tees["white"])
+
+
+def test_build_hole_origin_is_grid_corner_and_matches_fixture(tmp_path, geo_points):
+    from caddie.geometry import rotate, to_local
+
+    h = _hole(11, tmp_path)
+    assert abs(h.rotation_deg - geo_points["rotation_deg"]) < 0.01
+    # grid (0, 0) corner is the origin: the fixture pin lands at tee_xy + fixture xy
+    pin = geo_points["points"][0]
+    x, y = rotate(*to_local(pin["lon"], pin["lat"], h.origin_lon, h.origin_lat), h.rotation_deg)
+    assert abs(x - h.pin_xy[0]) < 0.5 and abs(y - h.pin_xy[1]) < 0.5
+    assert abs(x - (h.tee_xy[0] + pin["x"])) < 0.5
+
+
+def test_build_hole_merges_traced_water_ob_and_pin(tmp_path):
+    from caddie.geometry import LIE_CODE, to_lonlat, unrotate
+
+    base = _hole(11, tmp_path / "base")
+
+    # trace a 30 x 30 m water square and an OB strip in grid meters, then write them in lon/lat
+    def ring(x0, y0, x1, y1):
+        pts = [(x0, y0), (x1, y0), (x1, y1), (x0, y1), (x0, y0)]
+        return [
+            list(to_lonlat(*unrotate(x, y, base.rotation_deg), base.origin_lon, base.origin_lat))
+            for x, y in pts
+        ]
+
+    wx, wy = base.tee_xy[0] + 40, base.tee_xy[1] + 100
+    traced = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {"kind": "water"},
+                "geometry": {"type": "Polygon", "coordinates": [ring(wx, wy, wx + 30, wy + 30)]},
+            },
+            {
+                "type": "Feature",
+                "properties": {"kind": "ob"},
+                "geometry": {"type": "Polygon", "coordinates": [ring(0, 0, 10, base.rows * 5)]},
+            },
+            {
+                "type": "Feature",
+                "properties": {"kind": "pin"},
+                "geometry": {
+                    "type": "Point",
+                    "coordinates": ring(base.pin_xy[0] + 3, base.pin_xy[1], 0, 0)[0],
+                },
+            },
+        ],
+    }
+    path = tmp_path / "traced_11.geojson"
+    path.write_text(json.dumps(traced))
+    h = _hole(11, tmp_path, traced=path)
+    assert np.count_nonzero(h.lie == LIE_CODE["water"]) >= 25
+    assert np.count_nonzero(h.lie == LIE_CODE["ob"]) > 0
+    assert np.all(h.drop_index[h.lie == LIE_CODE["water"]] >= 0)
+    assert np.all(h.drop_index[h.lie != LIE_CODE["water"]] == -1)
+    # the traced pin is used: its lon/lat round-trips from the new hole's pin_xy
+    traced_pin = traced["features"][2]["geometry"]["coordinates"]
+    lon, lat = to_lonlat(*unrotate(*h.pin_xy, h.rotation_deg), h.origin_lon, h.origin_lat)
+    assert abs(lon - traced_pin[0]) < 1e-6 and abs(lat - traced_pin[1]) < 1e-6
+    assert "water" in h.polygons_xy and "ob" in h.polygons_xy
