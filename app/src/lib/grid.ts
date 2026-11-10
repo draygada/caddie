@@ -56,3 +56,42 @@ export function policyAt(b: HoleBundle, p: XY): { club: string; dir_deg: number 
   }
   return { club: name, dir_deg }
 }
+
+/**
+ * Bilinear interpolation of the value grid at `p` (Alg 8.6), using the four cell
+ * centres around `p`. Points beyond the outermost centres are clamped to them. A NaN
+ * neighbour takes the value of the nearest finite neighbour of the four; the result is
+ * NaN only when all four are NaN.
+ */
+export function valueBilinear(b: HoleBundle, p: XY): number {
+  const { rows, cols, cell_m } = b.meta
+  // continuous cell coordinates where integer k is the centre of row/col k
+  const u = Math.min(Math.max(p.x / cell_m - 0.5, 0), cols - 1)
+  const v = Math.min(Math.max(p.y / cell_m - 0.5, 0), rows - 1)
+  const c0 = Math.min(Math.floor(u), cols - 2)
+  const r0 = Math.min(Math.floor(v), rows - 2)
+  const a = u - c0 // weight toward c0 + 1
+  const g = v - r0 // weight toward r0 + 1
+
+  const idx = [r0 * cols + c0, r0 * cols + c0 + 1, (r0 + 1) * cols + c0, (r0 + 1) * cols + c0 + 1]
+  const w = [(1 - a) * (1 - g), a * (1 - g), (1 - a) * g, a * g]
+  const vals = idx.map((i) => b.value[i])
+
+  let nearestFinite = NaN
+  let best = Infinity
+  for (let k = 0; k < 4; k++) {
+    if (!Number.isFinite(vals[k])) continue
+    const dc = (k % 2) - a
+    const dr = Math.floor(k / 2) - g
+    const d = dc * dc + dr * dr
+    if (d < best) {
+      best = d
+      nearestFinite = vals[k]
+    }
+  }
+  if (!Number.isFinite(nearestFinite)) return NaN
+
+  let sum = 0
+  for (let k = 0; k < 4; k++) sum += w[k] * (Number.isFinite(vals[k]) ? vals[k] : nearestFinite)
+  return sum
+}

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import { cellOf, centreOf, distance, lieAt, policyAt, valueNearest } from './grid'
+import { cellOf, centreOf, distance, lieAt, policyAt, valueBilinear, valueNearest } from './grid'
+import type { HoleBundle } from './types'
 import { CELL_M, COLS, ROWS, testBundle } from './testBundle'
 import { readToyBundle } from './toyFiles'
 
@@ -87,5 +88,62 @@ describe('toy bundle lookups (public/data/toy/drop from solver part 08)', () => 
     expect(policyAt(b, pin)).toBeNull()
     expect(policyAt(b, { x: 47.5, y: 20 })).toBeNull()
     expect(policyAt(b, { x: 2.5, y: 37.5 })).toBeNull()
+  })
+})
+
+describe('valueBilinear (Alg 8.6 on cell centres)', () => {
+  function yField(): HoleBundle {
+    const b = testBundle()
+    for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) b.value[r * COLS + c] = (r + 0.5) * CELL_M
+    return b
+  }
+
+  it('reproduces a field equal to y at any point between the outer centres', () => {
+    const b = yField()
+    for (const p of [
+      { x: 2.5, y: 2.5 },
+      { x: 12, y: 47.5 },
+      { x: 31.3, y: 17.77 },
+      { x: 0, y: 30 },
+      { x: 49.9, y: 44.4 },
+      { x: 26, y: 2.5 },
+    ])
+      expect(valueBilinear(b, p)).toBeCloseTo(p.y, 6)
+  })
+
+  it('clamps to the outer centres beyond them instead of extrapolating', () => {
+    const b = yField()
+    expect(valueBilinear(b, { x: 10, y: 0 })).toBeCloseTo(2.5, 6)
+    expect(valueBilinear(b, { x: 10, y: 60 })).toBeCloseTo(47.5, 6)
+  })
+
+  it('equals the cell value at every cell centre', () => {
+    const b = readToyBundle()
+    for (let r = 0; r < b.meta.rows; r++)
+      for (let c = 0; c < b.meta.cols - 1; c++) {
+        const v = valueBilinear(b, centreOf(b, r, c))
+        const want = b.value[r * b.meta.cols + c]
+        if (Number.isNaN(want)) expect(Number.isNaN(v) || Number.isFinite(v)).toBe(true)
+        else expect(v).toBeCloseTo(want, 5)
+      }
+  })
+
+  it('replaces NaN neighbours with the nearest finite of the four', () => {
+    const b = yField()
+    b.value[0] = NaN // corner cell (0, 0)
+    const v = valueBilinear(b, { x: 3, y: 3 })
+    expect(Number.isFinite(v)).toBe(true)
+    expect(v).toBeGreaterThanOrEqual(2.5)
+    expect(v).toBeLessThanOrEqual(7.5)
+    // the toy's OB column 9 is NaN: a point between columns 8 and 9 stays finite
+    const toy = readToyBundle()
+    expect(Number.isFinite(valueBilinear(toy, { x: 46, y: 22 }))).toBe(true)
+    expect(valueBilinear(toy, { x: 27.5, y: 47.5 })).toBeCloseTo(1.5, 6)
+  })
+
+  it('is NaN only when all four neighbours are NaN', () => {
+    const b = yField()
+    b.value.fill(NaN)
+    expect(valueBilinear(b, { x: 20, y: 20 })).toBeNaN()
   })
 })
