@@ -20,7 +20,7 @@ from typing import Literal
 import numpy as np
 from scipy.stats import norm, qmc
 
-from caddie.dispersion import MISHIT_MEAN, ClubParams
+from caddie.dispersion import MISHIT_MEAN, ClubParams, Player
 
 log = logging.getLogger(__name__)
 
@@ -40,6 +40,18 @@ PenaltyMode = Literal["mulligan", "drop", "replay"]
 PENALTY_MODES: tuple[PenaltyMode, ...] = ("mulligan", "drop", "replay")
 
 DIRECTIONS_DEG: np.ndarray = np.arange(-90, 91, 2, dtype=float)
+
+# Lies a shot can be played from, in offset-table order. Shots from the green
+# are never chosen (green cells are terminal) but the table keeps the slot so
+# the online step can use it; the green row uses the fairway multipliers.
+FROM_LIES: tuple[Lie, ...] = (Lie.TEE, Lie.FAIRWAY, Lie.ROUGH, Lie.BUNKER, Lie.GREEN)
+FROM_LIE_NAME: dict[Lie, str] = {
+    Lie.TEE: "tee",
+    Lie.FAIRWAY: "fairway",
+    Lie.ROUGH: "rough",
+    Lie.BUNKER: "bunker",
+    Lie.GREEN: "fairway",
+}
 
 
 @dataclass
@@ -91,3 +103,35 @@ def landing_offsets(
     sx, cy = aim_unit(dir_deg + theta_deg)
     roll_m = (club.mu_r + club.sigma_r * draws.roll) * lie_mult["roll"]
     return carry * sx, carry * cy, roll_m
+
+
+@dataclass
+class OffsetTables:
+    """Landing offsets for every (club, from-lie, direction), K as the trailing axis."""
+
+    dx: np.ndarray  # (n_clubs, n_lies, n_dirs, K)
+    dy: np.ndarray
+    roll: np.ndarray
+
+
+def build_offset_tables(player: Player, draws: Draws) -> OffsetTables:
+    """Precompute landing offsets for every club in ``player.club_order``."""
+    n_clubs, n_lies, n_dirs, K = (
+        len(player.club_order),
+        len(FROM_LIES),
+        len(DIRECTIONS_DEG),
+        len(draws.theta),
+    )
+    dx = np.empty((n_clubs, n_lies, n_dirs, K))
+    dy = np.empty_like(dx)
+    roll = np.empty_like(dx)
+    for ci, name in enumerate(player.club_order):
+        club = player.clubs[name]
+        for li, lie in enumerate(FROM_LIES):
+            mult = player.lie[FROM_LIE_NAME[lie]]
+            for di, d in enumerate(DIRECTIONS_DEG):
+                dx[ci, li, di], dy[ci, li, di], roll[ci, li, di] = landing_offsets(
+                    club, mult, draws, d
+                )
+    log.info("built offset tables %s", dx.shape)
+    return OffsetTables(dx=dx, dy=dy, roll=roll)

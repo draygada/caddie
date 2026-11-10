@@ -4,7 +4,17 @@ import numpy as np
 import pytest
 
 from caddie.dispersion import ClubParams
-from caddie.mdp import DIRECTIONS_DEG, Draws, Lie, landing_offsets, make_draws
+from caddie.mdp import (
+    DIRECTIONS_DEG,
+    FROM_LIES,
+    Draws,
+    Lie,
+    OffsetTables,
+    build_offset_tables,
+    landing_offsets,
+    make_draws,
+)
+from tests.fixtures.toy_hole import toy_player
 
 # slice 1: Lie enum, directions, draws
 
@@ -84,3 +94,37 @@ def test_landing_offsets_spread_and_lie_multipliers(draws):
     assert np.hypot(dxr, dyr).mean() < carry.mean()
     assert dxr.std() > dx.std()
     assert np.allclose(rollr, 0.5 * roll)
+
+
+# slice 3: offset tables
+
+
+@pytest.fixture(scope="module")
+def tables(draws) -> OffsetTables:
+    return build_offset_tables(toy_player(), draws)
+
+
+def test_from_lies_order():
+    assert FROM_LIES == (Lie.TEE, Lie.FAIRWAY, Lie.ROUGH, Lie.BUNKER, Lie.GREEN)
+
+
+def test_offset_tables_shape(tables):
+    assert tables.dx.shape == tables.dy.shape == tables.roll.shape == (1, 5, 91, 200)
+    assert tables.dx.dtype == np.float64
+
+
+def test_offset_tables_rough_wider_than_fairway(tables):
+    fw = FROM_LIES.index(Lie.FAIRWAY)
+    rg = FROM_LIES.index(Lie.ROUGH)
+    d0 = 45  # direction 0
+    assert tables.dx[0, rg, d0].std() > tables.dx[0, fw, d0].std()
+    assert tables.dy[0, rg, d0].mean() < tables.dy[0, fw, d0].mean()
+    assert np.allclose(tables.roll[0, FROM_LIES.index(Lie.BUNKER), d0], 0.0)
+    assert np.array_equal(tables.dx[0, fw, d0], tables.dx[0, FROM_LIES.index(Lie.TEE), d0])
+
+
+def test_offset_tables_direction_axis(tables):
+    fw = FROM_LIES.index(Lie.FAIRWAY)
+    assert tables.dx[0, fw, 0].mean() < -20  # dir -90 is to the left
+    assert tables.dx[0, fw, 90].mean() > 20
+    assert tables.dy[0, fw, 45].mean() > 20
