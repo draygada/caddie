@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
+import { policyAt, valueNearest } from './lib/grid'
 import { readToyBundle, toyPlayerDoc } from './lib/toyFiles'
 import { initialState, useStore } from './store'
 
@@ -98,5 +99,69 @@ describe('setTee', () => {
     useStore.setState({ player: toyPlayerDoc(), bundle })
     expect(useStore.getState().player?.handicap).toBe(15)
     expect(useStore.getState().bundle?.meta.hole).toBe('toy')
+  })
+})
+
+describe('derived recommendation (subscriber)', () => {
+  const bundle = readToyBundle()
+  const tee = { x: bundle.meta.tee_xy[0], y: bundle.meta.tee_xy[1] }
+
+  it('writes a grid recommendation when the ball moves', () => {
+    useStore.setState({ bundle })
+    useStore.getState().setBall(tee)
+    const r = useStore.getState().recommendation
+    expect(r).not.toBeNull()
+    expect(r?.source).toBe('grid')
+    expect(r?.club).toBe('test7i')
+    expect(r?.dir_deg).toBe(policyAt(bundle, tee)?.dir_deg)
+    expect(r?.expected_strokes).toBe(valueNearest(bundle, tee))
+    expect(Number.isFinite(r?.expected_strokes)).toBe(true)
+  })
+
+  it('is null on the green, off grid, and without a bundle or ball', () => {
+    useStore.setState({ bundle })
+    useStore.getState().setBall({ x: bundle.meta.pin_xy[0], y: bundle.meta.pin_xy[1] })
+    expect(useStore.getState().recommendation).toBeNull()
+    useStore.getState().setBall({ x: 47.5, y: 20 }) // OB column
+    expect(useStore.getState().recommendation).toBeNull()
+    useStore.getState().setBall(tee)
+    expect(useStore.getState().recommendation).not.toBeNull()
+    useStore.getState().setBall(null)
+    expect(useStore.getState().recommendation).toBeNull()
+    useStore.getState().setBall(tee)
+    useStore.setState({ bundle: null })
+    expect(useStore.getState().recommendation).toBeNull()
+  })
+
+  it('recomputes when the bundle changes under a fixed ball', () => {
+    useStore.setState({ bundle, ball: tee })
+    const first = useStore.getState().recommendation
+    expect(first).not.toBeNull()
+    const shifted = { ...bundle, value: bundle.value.map((v) => v + 1) }
+    useStore.setState({ bundle: shifted })
+    const second = useStore.getState().recommendation
+    expect(second?.expected_strokes).toBeCloseTo((first?.expected_strokes ?? 0) + 1, 5)
+  })
+
+  it('recomputes on a lie override but still reads the grid in M1', () => {
+    useStore.setState({ bundle, ball: tee })
+    const before = useStore.getState().recommendation
+    useStore.getState().setLieOverride(3)
+    const after = useStore.getState().recommendation
+    expect(after).toEqual(before)
+  })
+
+  it('does not run when unrelated fields change', () => {
+    useStore.setState({ bundle, ball: tee })
+    const r = useStore.getState().recommendation
+    useStore.getState().setMode('replay')
+    useStore.getState().setGps({ x: 1, y: 1, accuracy_m: 3 })
+    expect(useStore.getState().recommendation).toBe(r) // same object, not recomputed
+  })
+
+  it('leaves a worker recommendation alone', () => {
+    useStore.setState({ bundle, ball: tee })
+    useStore.getState().setRecommendation({ club: 'x', dir_deg: 0, expected_strokes: 9, source: 'worker' })
+    expect(useStore.getState().recommendation?.source).toBe('worker')
   })
 })

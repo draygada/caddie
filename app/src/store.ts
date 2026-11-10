@@ -5,6 +5,7 @@
  */
 import { create } from 'zustand'
 
+import { policyAt, valueNearest } from './lib/grid'
 import type { HoleBundle, Lie, Mode, Player, XY } from './lib/types'
 
 export type HoleId = 10 | 11 | 12 | 'toy'
@@ -77,3 +78,29 @@ export const useStore = create<State>()((set, get) => ({
   setGps: (gps) => set({ gps }),
   setRecommendation: (recommendation) => set({ recommendation }),
 }))
+
+// --- derived recommendation (M1: a direct grid lookup) -------------------------------------
+
+/** Grid recommendation at `ball`, or null on terminal and out-of-grid cells. */
+export function gridRecommendation(bundle: HoleBundle | null, ball: XY | null): Recommendation | null {
+  if (!bundle || !ball) return null
+  const policy = policyAt(bundle, ball)
+  if (!policy) return null
+  return {
+    club: policy.club,
+    dir_deg: policy.dir_deg,
+    expected_strokes: valueNearest(bundle, ball),
+    source: 'grid',
+  }
+}
+
+/**
+ * Whenever ball, lieOverride or bundle changes and no worker is active (M1), write the grid
+ * recommendation. Runs outside React render. Part 12's worker takes over by writing
+ * `source: 'worker'` recommendations itself.
+ */
+useStore.subscribe((state, prev) => {
+  if (state.ball === prev.ball && state.lieOverride === prev.lieOverride && state.bundle === prev.bundle)
+    return
+  state.setRecommendation(gridRecommendation(state.bundle, state.ball))
+})
