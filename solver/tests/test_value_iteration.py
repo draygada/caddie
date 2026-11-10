@@ -162,3 +162,25 @@ def test_column_8_aims_left_of_the_ob(solutions, mode):
     for r in range(hole.rows):
         if hole.lie[r, 8] in (1, 2, 3, 4):
             assert _dir_deg(s, r, 8) < 0.0, (r, 8)
+
+
+# slice 4: mode ordering
+
+TEE_IDX = 5  # cell (0, 5)
+
+
+def test_mode_ordering_against_replay(solutions):
+    u = {m: float(s.U[TEE_IDX]) for m, s in solutions.items()}
+    assert u["mulligan"] <= u["replay"] + 1e-6
+    assert u["drop"] <= u["replay"] + 1e-6
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="part file asks for mulligan <= drop at the tee; on the toy hole drop is about "
+    "0.03 strokes better because an OB over the green drops onto the green (nearest "
+    "playable cell) while a mulligan rehits from the trap cells beside it. Needs a "
+    "decision on the toy hole or the OB drop rule",
+)
+def test_mulligan_no_worse_than_drop_per_part_file(solutions):
+    assert solutions["mulligan"].U[TEE_IDX] <= solutions["drop"].U[TEE_IDX] + 1e-6
