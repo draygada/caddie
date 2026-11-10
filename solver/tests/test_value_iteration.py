@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from caddie.mdp import Lie, build_offset_tables, make_draws
+from caddie.mdp import DIRECTIONS_DEG, Lie, build_offset_tables, make_draws
 from caddie.value_iteration import (
     Solution,
     all_actions,
@@ -128,3 +128,37 @@ def test_tee_value_beats_brute_force(replay_solution):
     tee_idx = int(hole.tee_xy[1] // hole.cell_m) * hole.cols + int(hole.tee_xy[0] // hole.cell_m)
     bf = brute_force_value_at_tee("replay", n=20000, rng=np.random.default_rng(42))
     assert replay_solution.U[tee_idx] <= bf + 0.05
+
+
+# slice 3: policy sanity on the toy hole
+
+
+@pytest.fixture(scope="module")
+def solutions(replay_solution) -> dict[str, Solution]:
+    out = {"replay": replay_solution}
+    for m in ("mulligan", "drop"):
+        out[m] = solve(toy_hole(), toy_player(), m, K=200, tol=0.01, max_sweeps=200, seed=0)
+    return out
+
+
+def _dir_deg(s: Solution, r: int, c: int) -> float:
+    i = r * 10 + c
+    assert s.dir[i] != 255
+    return float(DIRECTIONS_DEG[s.dir[i]])
+
+
+@pytest.mark.parametrize("mode", ["mulligan", "drop", "replay"])
+def test_tee_shots_aim_around_the_bunkers(solutions, mode):
+    # the tee cells in columns 4 and 5 sit directly behind the bunker at (5, 4) and (5, 5)
+    s = solutions[mode]
+    for c in (4, 5):
+        assert _dir_deg(s, 0, c) != 0.0
+
+
+@pytest.mark.parametrize("mode", ["mulligan", "drop", "replay"])
+def test_column_8_aims_left_of_the_ob(solutions, mode):
+    s = solutions[mode]
+    hole = toy_hole()
+    for r in range(hole.rows):
+        if hole.lie[r, 8] in (1, 2, 3, 4):
+            assert _dir_deg(s, r, 8) < 0.0, (r, 8)
