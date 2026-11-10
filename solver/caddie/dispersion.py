@@ -286,3 +286,51 @@ def fit_rough_multipliers(
     sigma = 0.5 * (sigma_theta / mat7i.sigma_theta_deg + sigma_d / mat7i.sigma_d)
     roll = float(np.clip(mu_r / mat7i.mu_r, 0.0, 1.0)) if mat7i.mu_r > 0 else 0.0
     return {"carry": carry, "sigma": sigma, "roll": roll}
+
+
+# --- slice 6: interpolate unsampled clubs ----------------------------------------------
+
+PARTIAL_WEDGES: tuple[str, ...] = ("sw70", "sw50", "sw30")
+PARTIAL_SPREAD_FACTOR = 1.2
+
+
+def interpolate_clubs(sampled: dict[str, ClubParams]) -> dict[str, ClubParams]:
+    """Fill the 12-club bag from the sampled clubs, in CLUB_ORDER.
+
+    Unsampled full-swing clubs take mu_c from NOMINAL_CARRY times their reference
+    club, and every other parameter linear in mu_c between the two nearest sampled
+    clubs (clamped at the ends). Partial wedges copy sw with mu_c scaled and the two
+    spread parameters multiplied by PARTIAL_SPREAD_FACTOR.
+    """
+    missing = [c for c in PRIOR_CARRY_FRACTION_OF_DRIVER if c not in sampled]
+    if missing:
+        raise ValueError(f"sampled clubs missing: {missing}")
+    order = sorted(sampled, key=lambda c: sampled[c].mu_c)
+    xs = np.array([sampled[c].mu_c for c in order])
+    fields = ("sigma_theta_deg", "sigma_d", "p", "mu_r", "sigma_r")
+    table = {f: np.array([getattr(sampled[c], f) for c in order]) for f in fields}
+
+    out: dict[str, ClubParams] = {}
+    for club in CLUB_ORDER:
+        if club in sampled:
+            out[club] = sampled[club]
+            continue
+        ratio = NOMINAL_CARRY[club]
+        assert ratio is not None
+        ref = sampled[NOMINAL_REF[club]]
+        mu_c = ratio * ref.mu_c
+        if club in PARTIAL_WEDGES:
+            out[club] = ClubParams(
+                mu_c=mu_c,
+                sigma_theta_deg=ref.sigma_theta_deg * PARTIAL_SPREAD_FACTOR,
+                sigma_d=ref.sigma_d * PARTIAL_SPREAD_FACTOR,
+                p=ref.p,
+                mu_r=ref.mu_r,
+                sigma_r=ref.sigma_r,
+                sampled=False,
+                stats=None,
+            )
+            continue
+        interp = {f: float(np.interp(mu_c, xs, table[f])) for f in fields}
+        out[club] = ClubParams(mu_c=mu_c, **interp, sampled=False, stats=None)
+    return out

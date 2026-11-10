@@ -206,3 +206,49 @@ def test_fit_rough_multipliers_defaults_below_15_shots():
     mat = fit_club("7i", _synthetic_shots(rng, 50, 140.0, 0.06, 0.05, 6.0, 5.0, 2.0), 15, 215.0)
     rough = _synthetic_shots(rng, 14, 120.0, 0.08, 0.05, 8.0, 2.5, 2.0, lie="rough")
     assert fit_rough_multipliers(mat, rough) == ROUGH_DEFAULTS
+
+
+# slice 6 -------------------------------------------------------------------
+
+
+def _sampled_bag():
+    from caddie.dispersion import ClubParams
+
+    spec = {  # mu_c, sigma_theta, sigma_d, p, mu_r, sigma_r
+        "driver": (215.0, 6.5, 0.07, 0.10, 18.0, 8.0),
+        "5h": (172.0, 6.0, 0.065, 0.08, 10.0, 5.0),
+        "7i": (140.0, 5.5, 0.06, 0.07, 5.0, 2.5),
+        "9i": (118.0, 5.0, 0.06, 0.06, 3.0, 2.0),
+        "sw": (86.0, 5.0, 0.07, 0.06, 1.5, 1.5),
+    }
+    return {k: ClubParams(*v, sampled=True, stats=None) for k, v in spec.items()}
+
+
+def test_interpolate_clubs_fills_the_bag():
+    from caddie.dispersion import CLUB_ORDER, interpolate_clubs
+
+    clubs = interpolate_clubs(_sampled_bag())
+    assert list(clubs) == CLUB_ORDER and len(clubs) == 12
+    mu = [clubs[c].mu_c for c in CLUB_ORDER]
+    assert all(a > b for a, b in zip(mu, mu[1:], strict=False)), mu
+    for c, cp in clubs.items():
+        for v in (cp.mu_c, cp.sigma_theta_deg, cp.sigma_d, cp.p, cp.mu_r, cp.sigma_r):
+            assert np.isfinite(v), c
+        assert cp.sampled == (c in _sampled_bag())
+        assert cp.stats is None or cp.sampled
+
+
+def test_interpolate_clubs_ratios_and_partial_wedges():
+    from caddie.dispersion import interpolate_clubs
+
+    clubs = interpolate_clubs(_sampled_bag())
+    assert clubs["3w"].mu_c == pytest.approx(0.92 * 215.0)
+    assert clubs["6i"].mu_c == pytest.approx(1.08 * 140.0)
+    assert clubs["pw"].mu_c == pytest.approx(0.90 * 118.0)
+    assert clubs["sw70"].mu_c == pytest.approx(0.78 * 86.0)
+    assert clubs["sw30"].sigma_theta_deg == pytest.approx(1.2 * 5.0)
+    assert clubs["sw30"].sigma_d == pytest.approx(1.2 * 0.07)
+    assert clubs["sw30"].mu_r == pytest.approx(1.5)
+    # 8i sits between 7i and 9i in mu_c, so its other parameters do too
+    assert 5.0 <= clubs["8i"].sigma_theta_deg <= 5.5
+    assert 3.0 <= clubs["8i"].mu_r <= 5.0
