@@ -203,3 +203,42 @@ def test_rasterize_corridor_margin(synthetic_hole):
     # with no margin nothing is rough
     lie0 = rasterize(synthetic_hole, rows=60, cols=40, cell_m=5.0, margin_m=0.0)
     assert np.count_nonzero(lie0 == LIE_CODE["rough"]) == 0
+
+
+# slice 5 -------------------------------------------------------------------
+
+
+@pytest.fixture
+def toy_lie():
+    """The 10 x 10 toy pattern from solver/CLAUDE.md as a lie grid (fairway base)."""
+    from caddie.geometry import LIE_CODE
+
+    lie = np.full((10, 10), LIE_CODE["fairway"], dtype=np.uint8)
+    lie[5, 4] = lie[5, 5] = LIE_CODE["bunker"]
+    lie[7, 0:4] = LIE_CODE["water"]
+    lie[:, 9] = LIE_CODE["ob"]
+    return lie
+
+
+def test_drop_index_water_maps_to_tee_side_fairway(toy_lie):
+    from caddie.geometry import LIE_CODE, compute_drop_index
+
+    drop = compute_drop_index(toy_lie, tee_xy=(27.5, 2.5), cell_m=5.0)
+    assert drop.dtype == np.int32 and drop.shape == toy_lie.shape
+    cols = toy_lie.shape[1]
+    for c in range(4):
+        i = drop[7, c]
+        assert i >= 0
+        r, cc = divmod(int(i), cols)
+        assert r <= 7, "drop cell must be on the tee side"
+        assert toy_lie[r, cc] in (LIE_CODE["fairway"], LIE_CODE["rough"])
+    # water at (7, 0) drops straight back to (6, 0), its nearest tee-side fairway cell
+    assert drop[7, 0] == 6 * cols + 0
+
+
+def test_drop_index_minus_one_off_water(toy_lie):
+    from caddie.geometry import LIE_CODE, compute_drop_index
+
+    drop = compute_drop_index(toy_lie, tee_xy=(27.5, 2.5), cell_m=5.0)
+    assert np.all(drop[toy_lie != LIE_CODE["water"]] == -1)
+    assert np.count_nonzero(drop >= 0) == 4

@@ -208,3 +208,34 @@ def rasterize(
         covered = contains_xy(union_all(polys), x, y)
         lie[covered] = LIE_CODE[kind]
     return lie
+
+
+# --- slice 5: drop index -------------------------------------------------------------
+
+
+def compute_drop_index(
+    lie: np.ndarray, tee_xy: tuple[float, float], cell_m: float
+) -> np.ndarray:
+    """int32 (rows, cols): for each water cell, the flat index of its drop cell; -1 elsewhere.
+
+    The drop cell is the nearest fairway or rough cell (Euclidean, cell centres) whose
+    y is at or below the water cell's y, i.e. on the tee side. `tee_xy` is accepted for
+    interface stability; with +y pointing at the pin the tee side is simply lower y.
+    """
+    rows, cols = lie.shape
+    drop = np.full((rows, cols), -1, dtype=np.int32)
+    water_r, water_c = np.nonzero(lie == LIE_CODE["water"])
+    if water_r.size == 0:
+        return drop
+    land_mask = (lie == LIE_CODE["fairway"]) | (lie == LIE_CODE["rough"])
+    land_r, land_c = np.nonzero(land_mask)
+    if land_r.size == 0:
+        raise ValueError("no fairway or rough cell available for a drop")
+    for r, c in zip(water_r, water_c, strict=True):
+        ok = land_r <= r
+        if not np.any(ok):
+            raise ValueError(f"water cell ({r}, {c}) has no tee-side fairway or rough cell")
+        d2 = (land_r[ok] - r) ** 2 + (land_c[ok] - c) ** 2
+        k = int(np.argmin(d2))
+        drop[r, c] = int(land_r[ok][k]) * cols + int(land_c[ok][k])
+    return drop
