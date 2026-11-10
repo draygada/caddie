@@ -23,7 +23,7 @@ Read this file, then the CLAUDE.md of the half you are working in (`solver/CLAUD
 | Coordinates | Hole-local meters. Origin at the Black tee, +y toward the pin, +x to the golfer's right. Lat/lon only in `meta.json` and at the GPS edge. |
 | Grid | 5 m cells, row-major, row 0 at the tee end. |
 | State | `(cell, lie)`, lie in {tee, fairway, rough, bunker, green}. Water and OB are terrain rules, not states. |
-| Action | `(club, direction)`. Directions: pin bearing plus or minus 90 degrees in 2 degree steps, 91 values. Clubs: 13 incl. partial wedges. |
+| Action | `(club, direction)`. Directions: relative to the bearing from the ball to the pin, plus or minus 90 degrees in 2 degree steps, 91 values; direction 0 aims at the pin from anywhere. Clubs: 13 incl. partial wedges. |
 | Transition | Land at sampled carry and lateral; look up lie at landing; add roll scaled by lie. |
 | Dispersion | Direction N(0, sigma_theta). Carry = mu_c (1 + sigma_d X), X ~ (1-p) N(0,1) + p N(-2,1). Roll N(mu_r, sigma_r). |
 | Data | 50 shots each SW, 9i, 7i, 5-hybrid; 100 driver; 20 rough 7i. Source: STMax launch monitor export. Canonical CSV columns `club, carry_m, total_m, lateral_m, lie, date`. |

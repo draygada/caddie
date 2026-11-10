@@ -9,7 +9,7 @@ The MDP (Ch 7.1): state and action spaces, the generative transition in two stag
 ## Definitions
 
 - State: `(r, c, lie)`; stored as the flat cell index `i = r * cols + c` plus the lie code from `hole.lie`. The lie is a function of the cell except where the online step overrides it, so the grid value `U[i]` is "value from cell i with its own lie".
-- Action: `(club_idx, dir_idx)`. `directions_deg = np.arange(-90, 91, 2)` relative to the pin bearing, which is +y. Direction d in degrees means the aim unit vector is `(sin d, cos d)`.
+- Action: `(club_idx, dir_idx)`. `directions_deg = np.arange(-90, 91, 2)` relative to the bearing from the cell to the pin, `b = atan2(pin_x - x, pin_y - y)`. Direction d in degrees means the aim unit vector is `(sin(b + d), cos(b + d))`; the offset tables are sampled for `b = 0` and `step_batch` rotates them by each cell's `b`.
 - Reward: -1 per shot; an extra -1 when `penalty_mode != "mulligan"` and the landing is water or OB.
 - Terminal: green cells. `U_terminal[i] = -putting(dist(cell i, pin))`.
 
