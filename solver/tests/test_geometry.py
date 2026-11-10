@@ -144,3 +144,62 @@ def test_no_polygon_assigned_to_two_holes(osm):
                 key = tuple(round(v, 9) for v in poly.representative_point().coords[0])
                 assert key not in seen, f"polygon in hole {hole} already in hole {seen[key]}"
                 seen[key] = hole
+
+
+# slice 4 -------------------------------------------------------------------
+
+
+def _box(x0, y0, x1, y1):
+    from shapely.geometry import box
+
+    return box(x0, y0, x1, y1)
+
+
+@pytest.fixture
+def synthetic_hole():
+    """Three polygons in grid meters on a 40 col x 60 row, 5 m grid (200 x 300 m)."""
+    fairway = _box(60, 20, 140, 240)  # 80 x 220 = 17600 m2
+    green = _box(80, 240, 120, 280)  # 40 x 40 = 1600 m2
+    bunker = _box(120, 100, 160, 140)  # 40 x 40 = 1600 m2, half over the fairway
+    return {"fairway": [fairway], "green": [green], "bunker": [bunker]}
+
+
+def test_rasterize_counts_match_areas(synthetic_hole):
+    from caddie.geometry import LIE_CODE, rasterize
+
+    cell = 5.0
+    lie = rasterize(synthetic_hole, rows=60, cols=40, cell_m=cell, margin_m=0.0)
+    assert lie.dtype == np.uint8 and lie.shape == (60, 40)
+    bunker = synthetic_hole["bunker"][0]
+    fairway_visible = synthetic_hole["fairway"][0].difference(bunker)
+    expected = {
+        "bunker": bunker.area,
+        "green": synthetic_hole["green"][0].area,
+        "fairway": fairway_visible.area,
+    }
+    for kind, area in expected.items():
+        got = np.count_nonzero(lie == LIE_CODE[kind]) * cell * cell
+        assert abs(got - area) <= 0.10 * area, (kind, got, area)
+
+
+def test_rasterize_priority_bunker_over_fairway(synthetic_hole):
+    from caddie.geometry import LIE_CODE, rasterize
+
+    lie = rasterize(synthetic_hole, rows=60, cols=40, cell_m=5.0, margin_m=0.0)
+    # cell centre (132.5, 122.5) is inside both the fairway and the bunker
+    assert lie[24, 26] == LIE_CODE["bunker"]
+    # cell centre (102.5, 122.5) is fairway only
+    assert lie[24, 20] == LIE_CODE["fairway"]
+
+
+def test_rasterize_corridor_margin(synthetic_hole):
+    from caddie.geometry import LIE_CODE, rasterize
+
+    lie = rasterize(synthetic_hole, rows=60, cols=40, cell_m=5.0, margin_m=20.0)
+    # far corner: outside every polygon plus 20 m -> OUT (0)
+    assert lie[0, 0] == LIE_CODE["out"]
+    # 10 m outside the fairway edge: inside the buffer, uncovered -> rough
+    assert lie[20, 10] == LIE_CODE["rough"]  # centre (52.5, 102.5), 7.5 m left of the fairway
+    # with no margin nothing is rough
+    lie0 = rasterize(synthetic_hole, rows=60, cols=40, cell_m=5.0, margin_m=0.0)
+    assert np.count_nonzero(lie0 == LIE_CODE["rough"]) == 0

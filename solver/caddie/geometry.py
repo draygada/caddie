@@ -14,7 +14,9 @@ import logging
 import math
 from pathlib import Path
 
+import numpy as np
 from pyproj import Transformer
+from shapely import contains_xy, union_all
 from shapely.geometry import LineString, Point, Polygon, shape
 from shapely.geometry.base import BaseGeometry
 
@@ -149,3 +151,60 @@ def extract_hole_features(osm: dict, hole_number: int) -> dict[str, list[Polygon
         )
         feats["green"] = feats["green"][:1]
     return feats
+
+
+# --- slice 4: rasterize --------------------------------------------------------------
+
+# Lie codes per the root data contract. Part 04 wraps these in the `Lie` IntEnum;
+# geometry.py cannot import a later part, so the raw table lives here.
+LIE_CODE: dict[str, int] = {
+    "out": 0,
+    "tee": 1,
+    "fairway": 2,
+    "rough": 3,
+    "bunker": 4,
+    "green": 5,
+    "water": 6,
+    "ob": 7,
+}
+
+# Lowest priority first: a later kind overwrites an earlier one where polygons overlap.
+RASTER_PRIORITY: tuple[str, ...] = ("rough", "fairway", "tee", "green", "bunker", "ob", "water")
+
+
+def cell_centres(rows: int, cols: int, cell_m: float) -> tuple[np.ndarray, np.ndarray]:
+    """(x, y) arrays of shape (rows, cols) with the centre of every cell."""
+    xs = (np.arange(cols) + 0.5) * cell_m
+    ys = (np.arange(rows) + 0.5) * cell_m
+    x, y = np.meshgrid(xs, ys)
+    return x, y
+
+
+def rasterize(
+    polys_xy: dict[str, list[Polygon]],
+    rows: int,
+    cols: int,
+    cell_m: float,
+    margin_m: float = 40.0,
+) -> np.ndarray:
+    """uint8 (rows, cols) lie grid from polygons in grid meters.
+
+    A cell takes the code of the highest-priority polygon covering its centre
+    (water > ob > bunker > green > tee > fairway > rough). Cells inside the union of
+    all polygons buffered by `margin_m` but covered by nothing are rough; cells
+    outside that corridor are 0 (out of grid).
+    """
+    x, y = cell_centres(rows, cols, cell_m)
+    lie = np.zeros((rows, cols), dtype=np.uint8)
+    everything = [p for polys in polys_xy.values() for p in polys]
+    if everything:
+        corridor = union_all(everything).buffer(margin_m)
+        inside = contains_xy(corridor, x, y)
+        lie[inside] = LIE_CODE["rough"]
+    for kind in RASTER_PRIORITY:
+        polys = polys_xy.get(kind, [])
+        if not polys:
+            continue
+        covered = contains_xy(union_all(polys), x, y)
+        lie[covered] = LIE_CODE[kind]
+    return lie
