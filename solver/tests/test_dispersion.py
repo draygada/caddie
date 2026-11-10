@@ -119,3 +119,52 @@ def test_prior_moves_posterior_mean_under_three_percent():
         s = update_club_stats(s, float(c), float(t), float(lat))
     mu_c = params_from_stats(s)[0]
     assert abs(mu_c - carry.mean()) / carry.mean() < 0.03
+
+
+# slice 4 -------------------------------------------------------------------
+
+
+def _mixture_carries(rng, n, mu_c, sigma_d, p):
+    mishit = rng.random(n) < p
+    x = rng.normal(0.0, 1.0, n) + np.where(mishit, -2.0, 0.0)
+    return mu_c * (1 + sigma_d * x)
+
+
+def test_fit_p_recovers_mishit_rate():
+    from caddie.dispersion import fit_p
+
+    rng = np.random.default_rng(0)  # seed 4 draws only 2 mishits in 60, which fits p = 0.02
+    carry = _mixture_carries(rng, 60, 140.0, 0.06, 0.10)
+    p = fit_p(carry, mu_c=140.0, sigma_d=0.06)
+    assert 0.03 <= p <= 0.20
+
+
+def test_fit_p_hits_lower_bound_without_mishits():
+    from caddie.dispersion import fit_p
+
+    rng = np.random.default_rng(5)
+    carry = _mixture_carries(rng, 60, 140.0, 0.06, 0.0)
+    p = fit_p(carry, mu_c=140.0, sigma_d=0.06)
+    assert p == pytest.approx(0.02, abs=1e-3)
+
+
+def test_fit_club_round_trips_synthetic_data():
+    from caddie.dispersion import SHOT_DTYPE, fit_club
+
+    rng = np.random.default_rng(6)
+    n = 80
+    carry = _mixture_carries(rng, n, 140.0, 0.06, 0.08)
+    theta = rng.normal(0, 6.0, n)
+    lateral = carry * np.tan(np.radians(theta))
+    total = carry + rng.normal(5.0, 2.0, n)
+    shots = np.array(
+        [(c, t, lat, "mat", "2026-11-01") for c, t, lat in zip(carry, total, lateral, strict=True)],
+        dtype=SHOT_DTYPE,
+    )
+    cp = fit_club("7i", shots, handicap=15, driver_mu_hint=215.0)
+    assert cp.sampled and cp.stats is not None and cp.stats.n == n
+    assert abs(cp.mu_c - carry.mean()) < 2.0
+    assert abs(cp.sigma_theta_deg - 6.0) < 1.0
+    assert abs(cp.mu_r - 5.0) < 1.0
+    assert abs(cp.sigma_r - 2.0) < 0.7
+    assert 0.02 <= cp.p <= 0.25

@@ -18,6 +18,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
+from scipy.optimize import minimize_scalar
+from scipy.stats import norm
 
 log = logging.getLogger(__name__)
 
@@ -187,3 +189,61 @@ def prior_for(club: str, handicap: int, driver_mu_hint: float) -> ClubStats:
         beta=PRIOR_ROLL_SIGMA_M**2 * a1,
     )
     return ClubStats(n=0, carry=carry, theta=theta, roll=roll)
+
+
+# --- slice 4: mishit rate by MLE (Ch 4.1) and fit_club -------------------------------
+
+
+@dataclass
+class ClubParams:
+    mu_c: float
+    sigma_theta_deg: float
+    sigma_d: float
+    p: float
+    mu_r: float
+    sigma_r: float
+    sampled: bool
+    stats: ClubStats | None  # None for interpolated clubs
+
+
+P_BOUNDS: tuple[float, float] = (0.02, 0.25)
+MISHIT_MEAN = -2.0  # fixed; not identifiable from 50 shots
+
+
+def _mixture_nll(p: float, z: np.ndarray) -> float:
+    lik = (1.0 - p) * norm.pdf(z) + p * norm.pdf(z - MISHIT_MEAN)
+    return float(-np.sum(np.log(np.maximum(lik, 1e-300))))
+
+
+def fit_p(
+    carry: np.ndarray, mu_c: float, sigma_d: float, p_bounds: tuple[float, float] = P_BOUNDS
+) -> float:
+    """Mishit rate by bounded scalar MLE with mu_c and sigma_d held fixed.
+
+    z = (c / mu_c - 1) / sigma_d; the constant -log(sigma_d mu_c) per shot does not
+    depend on p and is omitted.
+    """
+    z = (np.asarray(carry, dtype=float) / mu_c - 1.0) / sigma_d
+    res = minimize_scalar(_mixture_nll, bounds=p_bounds, args=(z,), method="bounded")
+    return float(res.x)
+
+
+def fit_club(club: str, shots: np.ndarray, handicap: int, driver_mu_hint: float) -> ClubParams:
+    """prior_for -> fold every shot through update_club_stats -> posterior means -> fit_p."""
+    stats = prior_for(club, handicap, driver_mu_hint)
+    for row in shots:
+        stats = update_club_stats(
+            stats, float(row["carry_m"]), float(row["total_m"]), float(row["lateral_m"])
+        )
+    mu_c, sigma_theta, sigma_d, mu_r, sigma_r = params_from_stats(stats)
+    p = fit_p(shots["carry_m"], mu_c, sigma_d)
+    return ClubParams(
+        mu_c=mu_c,
+        sigma_theta_deg=sigma_theta,
+        sigma_d=sigma_d,
+        p=p,
+        mu_r=mu_r,
+        sigma_r=sigma_r,
+        sampled=True,
+        stats=stats,
+    )
