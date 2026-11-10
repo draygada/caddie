@@ -252,3 +252,22 @@ def test_cli_all_toy_drop_populates_app_dir(tmp_path):
 
 def test_cli_all_rejects_unknown_mode(tmp_path):
     assert main(["all", "--holes", "toy", "--modes", "bogus", "--out", str(tmp_path)]) == 1
+
+
+# --- slice 5: committed fixture bundle for the app ------------------------------------------
+
+APP_DATA = SOLVER_DIR.parent / "app" / "public" / "data"
+
+
+def test_committed_toy_fixture_matches_a_fresh_solve(toy_solution):
+    """app/public/data/toy/drop and player.json are what `all --holes toy --modes drop` writes."""
+    solution, hole, player = toy_solution
+    meta, lie, value, club, direction = read_bundle(APP_DATA / "toy" / "drop")
+    assert meta["hole"] == "toy" and meta["penalty_mode"] == "drop"
+    assert (meta["rows"], meta["cols"]) == (hole.rows, hole.cols)
+    np.testing.assert_array_equal(lie, hole.lie)
+    np.testing.assert_array_equal(value.ravel(), solution.U)
+    np.testing.assert_array_equal(club.ravel(), solution.club)
+    np.testing.assert_array_equal(direction.ravel(), solution.dir)
+    doc = json.loads((APP_DATA / "player.json").read_text())
+    assert doc == player_to_json(player)

@@ -1,0 +1,48 @@
+{
+  "handicap": 15,
+  "clubs": {
+    "test7i": {
+      "mu_c": 25.0,
+      "sigma_theta_deg": 4.0,
+      "sigma_d": 0.05,
+      "p": 0.05,
+      "mu_r": 2.0,
+      "sigma_r": 1.0,
+      "sampled": true,
+      "stats": null
+    }
+  },
+  "club_order": [
+    "test7i"
+  ],
+  "lie": {
+    "tee": {
+      "carry": 1.0,
+      "sigma": 1.0,
+      "roll": 1.0
+    },
+    "fairway": {
+      "carry": 1.0,
+      "sigma": 1.0,
+      "roll": 1.0
+    },
+    "rough": {
+      "carry": 0.9,
+      "sigma": 1.3,
+      "roll": 0.5
+    },
+    "bunker": {
+      "carry": 0.8,
+      "sigma": 1.6,
+      "roll": 0.0
+    }
+  },
+  "putting": {
+    "distance_m": [
+      1
+    ],
+    "expected_putts": [
+      1.5
+    ]
+  }
+}
