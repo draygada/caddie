@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
-import { cellOf, centreOf, distance } from './grid'
+import { cellOf, centreOf, distance, lieAt, policyAt, valueNearest } from './grid'
 import { CELL_M, COLS, ROWS, testBundle } from './testBundle'
+import { readToyBundle } from './toyFiles'
 
 describe('cellOf', () => {
   const b = testBundle()
@@ -43,5 +44,48 @@ describe('distance', () => {
   it('is Euclidean', () => {
     expect(distance({ x: 0, y: 0 }, { x: 3, y: 4 })).toBe(5)
     expect(distance({ x: 1, y: 1 }, { x: 1, y: 1 })).toBe(0)
+  })
+})
+
+describe('toy bundle lookups (public/data/toy/drop from solver part 08)', () => {
+  const b = readToyBundle()
+  const tee = { x: b.meta.tee_xy[0], y: b.meta.tee_xy[1] }
+  const pin = { x: b.meta.pin_xy[0], y: b.meta.pin_xy[1] }
+
+  it('has the expected shape', () => {
+    expect(b.meta.rows * b.meta.cols).toBe(b.value.length)
+    expect(b.meta.directions_deg).toHaveLength(91)
+  })
+
+  it('lieAt reads the lie code of the containing cell', () => {
+    expect(lieAt(b, tee)).toBe(2) // the toy has no tee cells: fairway at row 0
+    expect(lieAt(b, pin)).toBe(5)
+    expect(lieAt(b, { x: 2.5, y: 37.5 })).toBe(6) // water, row 7 col 0
+    expect(lieAt(b, { x: 47.5, y: 20 })).toBe(7) // OB column
+    expect(lieAt(b, { x: 22.5, y: 27.5 })).toBe(4) // bunker (5, 4)
+    expect(lieAt(b, { x: 99, y: 99 })).toBe(7) // clamped to the OB corner
+  })
+
+  it('valueNearest returns the containing cell value, NaN where there is no state', () => {
+    expect(valueNearest(b, pin)).toBe(1.5)
+    expect(valueNearest(b, tee)).toBe(b.value[cellOf(b, tee).i])
+    expect(valueNearest(b, { x: 27.6, y: 2.4 })).toBe(valueNearest(b, tee))
+    expect(valueNearest(b, { x: 2.5, y: 37.5 })).toBeNaN()
+    expect(valueNearest(b, { x: 47.5, y: 20 })).toBeNaN()
+  })
+
+  it('policyAt names the club and the direction in degrees', () => {
+    const p = policyAt(b, tee)
+    expect(p).not.toBeNull()
+    expect(p?.club).toBe('test7i')
+    expect(p?.dir_deg).toBe(b.meta.directions_deg[b.dir[cellOf(b, tee).i]])
+    expect(Number.isInteger(p?.dir_deg)).toBe(true)
+    expect(Math.abs(p?.dir_deg ?? 999)).toBeLessThanOrEqual(90)
+  })
+
+  it('policyAt is null on terminal and OUT cells (255)', () => {
+    expect(policyAt(b, pin)).toBeNull()
+    expect(policyAt(b, { x: 47.5, y: 20 })).toBeNull()
+    expect(policyAt(b, { x: 2.5, y: 37.5 })).toBeNull()
   })
 })
