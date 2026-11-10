@@ -374,7 +374,7 @@ def build_player(shots_path: Path, putting: PuttingLike, handicap: int) -> Playe
             log.warning(
                 "%s: sigma_theta %.1f deg outside [%g, %g]", club, cp.sigma_theta_deg, lo, hi
             )
-        if cp.p <= P_BOUNDS[0] + 1e-6 or cp.p >= P_BOUNDS[1] - 1e-6:
+        if cp.p <= P_BOUNDS[0] + 1e-3 or cp.p >= P_BOUNDS[1] - 1e-3:  # bounded MLE stops short
             log.warning("%s: p = %.3f pinned at a bound of %s", club, cp.p, P_BOUNDS)
         sampled[club] = cp
     rough_rows = shots["7i"][shots["7i"]["lie"] == "rough"]
