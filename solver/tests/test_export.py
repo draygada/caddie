@@ -12,7 +12,13 @@ import pytest
 
 from caddie.cli import main
 from caddie.dispersion import player_to_json
-from caddie.export import player_from_json, read_bundle, write_bundle, write_player
+from caddie.export import (
+    copy_to_app,
+    player_from_json,
+    read_bundle,
+    write_bundle,
+    write_player,
+)
 from caddie.mdp import DIRECTIONS_DEG
 from caddie.value_iteration import solve
 from tests.fixtures.toy_hole import toy_hole, toy_player
@@ -200,3 +206,49 @@ def test_cli_export_solves_when_bundle_missing(tmp_path):
     code = main(["export", "toy", "--mode", "drop", "--out", str(tmp_path)])
     assert code == 0
     assert all((tmp_path / "toy" / "drop" / f).exists() for f in BUNDLE_FILES)
+
+
+# --- slice 4: all and copy_to_app ---------------------------------------------------------------
+
+
+def test_copy_to_app_copies_player_and_bundles(toy_solution, tmp_path):
+    solution, hole, player = toy_solution
+    out, app = tmp_path / "out", tmp_path / "app"
+    write_bundle(solution, hole, player, out, label="toy")
+    write_player(player, out)
+    (out / "toy_drop_value.png").write_bytes(b"png")  # not part of the bundle
+    copy_to_app(out, app)
+    assert (app / "player.json").read_bytes() == (out / "player.json").read_bytes()
+    for name in BUNDLE_FILES:
+        assert (app / "toy" / "drop" / name).read_bytes() == (
+            out / "toy" / "drop" / name
+        ).read_bytes()
+    assert not (app / "toy_drop_value.png").exists()
+
+
+def test_cli_all_toy_drop_populates_app_dir(tmp_path):
+    out, app = tmp_path / "out", tmp_path / "app"
+    code = main(
+        [
+            "all",
+            "--holes",
+            "toy",
+            "--modes",
+            "drop",
+            "--to-app",
+            "--out",
+            str(out),
+            "--app-dir",
+            str(app),
+        ]
+    )
+    assert code == 0
+    assert sorted(p.name for p in (app / "toy" / "drop").iterdir()) == sorted(BUNDLE_FILES)
+    meta, lie, value, club, direction = read_bundle(app / "toy" / "drop")
+    assert meta["hole"] == "toy" and meta["penalty_mode"] == "drop"
+    doc = json.loads((app / "player.json").read_text())
+    assert doc["club_order"] == ["test7i"]  # toy only: the app player is the toy player
+
+
+def test_cli_all_rejects_unknown_mode(tmp_path):
+    assert main(["all", "--holes", "toy", "--modes", "bogus", "--out", str(tmp_path)]) == 1
