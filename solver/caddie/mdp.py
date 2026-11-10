@@ -164,22 +164,30 @@ def apply_roll(landing_lie: np.ndarray, roll_m: np.ndarray, player: Player) -> n
     return roll_m * roll_multipliers(player)[landing_lie]
 
 
-_PLAYABLE_CACHE: dict[int, tuple[Hole, cKDTree, np.ndarray]] = {}
 PLAYABLE_LIES = (Lie.TEE, Lie.FAIRWAY, Lie.ROUGH, Lie.BUNKER, Lie.GREEN)
+_OB_DROP_CACHE: dict[int, tuple[Hole, np.ndarray]] = {}
 
 
-def playable_tree(hole: Hole) -> tuple[cKDTree, np.ndarray]:
-    """KD-tree over the centres of in-grid non-water, non-OB cells, plus their flat indices."""
-    hit = _PLAYABLE_CACHE.get(id(hole))
+def ob_drop_lookup(hole: Hole) -> np.ndarray:
+    """(rows*cols,) flat index of the nearest in-grid non-water, non-OB cell to each cell.
+
+    Computed once per hole with a KD-tree over the playable cell centres and
+    cached, so step_batch answers OB drops with a gather. Points off the grid
+    are first clipped to the edge cell by :func:`locate`.
+    """
+    hit = _OB_DROP_CACHE.get(id(hole))
     if hit is not None and hit[0] is hole:
-        return hit[1], hit[2]
+        return hit[1]
     flat = hole.lie.reshape(-1)
-    idx = np.flatnonzero(np.isin(flat, [int(v) for v in PLAYABLE_LIES]))
-    r, c = np.divmod(idx, hole.cols)
-    xy = np.column_stack(((c + 0.5) * hole.cell_m, (r + 0.5) * hole.cell_m))
-    tree = cKDTree(xy)
-    _PLAYABLE_CACHE[id(hole)] = (hole, tree, idx)
-    return tree, idx
+    playable = np.flatnonzero(np.isin(flat, [int(v) for v in PLAYABLE_LIES]))
+    r, c = np.divmod(playable, hole.cols)
+    tree = cKDTree(np.column_stack(((c + 0.5) * hole.cell_m, (r + 0.5) * hole.cell_m)))
+    all_idx = np.arange(flat.size)
+    ar, ac = np.divmod(all_idx, hole.cols)
+    _, nearest = tree.query(np.column_stack(((ac + 0.5) * hole.cell_m, (ar + 0.5) * hole.cell_m)))
+    look = playable[nearest].astype(np.int64)
+    _OB_DROP_CACHE[id(hole)] = (hole, look)
+    return look
 
 
 def cell_xy(hole: Hole, idx: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -252,9 +260,7 @@ def step_batch(
         if np.any(water):
             next_idx[water] = hole.drop_index.reshape(-1)[final_idx[water]]
         if np.any(ob):
-            tree, playable = playable_tree(hole)
-            _, nearest = tree.query(np.column_stack((fx[ob], fy[ob])))
-            next_idx[ob] = playable[nearest]
+            next_idx[ob] = ob_drop_lookup(hole)[final_idx[ob]]
     return next_idx.astype(np.int64), reward
 
 

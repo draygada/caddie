@@ -334,3 +334,22 @@ def test_brute_force_other_modes_finite():
     }
     assert all(np.isfinite(v) and v > 2.0 for v in vals.values()), vals
     assert vals["mulligan"] <= vals["replay"]
+
+
+# slice 4 fix: precomputed OB drop lookup
+
+
+def test_ob_drop_lookup_matches_nearest_playable():
+    from caddie.mdp import ob_drop_lookup
+
+    h = toy_hole()
+    look = ob_drop_lookup(h)
+    flat = h.lie.reshape(-1)
+    assert look.shape == (100,) and look.dtype == np.int64
+    playable = np.isin(flat, [1, 2, 3, 4, 5])
+    assert np.array_equal(look[playable], np.flatnonzero(playable))
+    # OB column 9 maps to column 8 on the same row; water at (7, 0..3) maps to a playable neighbour
+    assert np.all(look[np.arange(10) * 10 + 9] == np.arange(10) * 10 + 8)
+    for i in np.flatnonzero(flat == Lie.WATER):
+        assert playable[look[i]] and abs(look[i] // 10 - i // 10) + abs(look[i] % 10 - i % 10) <= 2
+    assert ob_drop_lookup(h) is look  # cached per hole
