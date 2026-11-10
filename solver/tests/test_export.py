@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import struct
 
 import numpy as np
 import pytest
@@ -102,3 +103,26 @@ def test_write_player_matches_player_json(toy_solution, tmp_path):
     assert set(doc) == {"handicap", "clubs", "club_order", "lie", "putting"}
     assert doc["club_order"] == player.club_order
     assert doc["putting"] == player.putting.to_json()
+
+
+# --- slice 2: byte layout -------------------------------------------------------------------
+
+
+def test_value_f32_byte_layout(toy_solution, tmp_path):
+    solution, hole, player = toy_solution
+    write_bundle(solution, hole, player, tmp_path)
+    d = tmp_path / "0" / "drop"
+    n = hole.rows * hole.cols
+    assert (d / "value.f32").stat().st_size == n * 4
+    for name in ("lie.u8", "club.u8", "dir.u8"):
+        assert (d / name).stat().st_size == n
+    raw = (d / "value.f32").read_bytes()
+    first = struct.unpack("<f", raw[:4])[0]
+    assert first == solution.U[0]  # cell (0, 0) is fairway on the toy, so finite
+    # the tee cell is playable, so its float is finite and equals U at that index
+    tee = int(hole.tee_xy[1] // hole.cell_m) * hole.cols + int(hole.tee_xy[0] // hole.cell_m)
+    tee_val = struct.unpack("<f", raw[4 * tee : 4 * tee + 4])[0]
+    assert np.isfinite(tee_val) and tee_val == solution.U[tee]
+    # last cell in row-major order is (rows - 1, cols - 1): OB on the toy, so NaN
+    last = struct.unpack("<f", raw[-4:])[0]
+    assert np.isnan(last) and hole.lie[-1, -1] == 7
