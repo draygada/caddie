@@ -15,7 +15,9 @@ import {
 import 'maplibre-gl/dist/maplibre-gl.css'
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url'
 import type { Feature as GJFeature, FeatureCollection, Geometry } from 'geojson'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
+
+import { BallMarker } from './BallMarker'
 
 import { gridCorners, gridToLonLat } from '../lib/geo'
 import { heatmapDataUrl } from '../lib/heatmap'
@@ -118,6 +120,7 @@ export interface HoleMapProps {
 export function HoleMap({ bundle, tee }: HoleMapProps) {
   const container = useRef<HTMLDivElement>(null)
   const mapRef = useRef<MLMap | null>(null)
+  const [map, setMap] = useState<MLMap | null>(null)
   const teeRef = useRef(tee)
 
   // Mount once.
@@ -133,9 +136,11 @@ export function HoleMap({ bundle, tee }: HoleMapProps) {
     })
     map.addControl(new NavigationControl({ showCompass: true }), 'top-right')
     mapRef.current = map
+    setMap(map)
     return () => {
       map.remove()
       mapRef.current = null
+      setMap(null)
     }
   }, [])
 
@@ -210,5 +215,9 @@ export function HoleMap({ bundle, tee }: HoleMapProps) {
     else map.once('load', apply)
   }, [bundle, tee])
 
-  return <div ref={container} className="h-full w-full" />
+  return (
+    <div ref={container} className="h-full w-full">
+      {map && <BallMarker map={map} />}
+    </div>
+  )
 }
