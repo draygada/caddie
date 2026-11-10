@@ -92,3 +92,30 @@ def test_update_order_does_not_matter():
     for comp in ("carry", "theta", "roll"):
         for fld, va in vars(getattr(a, comp)).items():
             assert abs(va - getattr(getattr(b, comp), fld)) < 1e-9 * max(1.0, abs(va))
+
+
+# slice 3 -------------------------------------------------------------------
+
+
+def test_prior_with_zero_shots_is_in_band():
+    from caddie.dispersion import params_from_stats, prior_for
+
+    mu_c, sigma_theta, sigma_d, mu_r, sigma_r = params_from_stats(prior_for("7i", 15, 215.0))
+    assert 120 <= mu_c <= 160
+    assert 5 <= sigma_theta <= 9
+    assert sigma_d == pytest.approx(0.08)
+    assert mu_r > 0 and sigma_r > 0
+
+
+def test_prior_moves_posterior_mean_under_three_percent():
+    from caddie.dispersion import params_from_stats, prior_for, update_club_stats
+
+    rng = np.random.default_rng(3)
+    carry = rng.normal(150.0, 10.0, 50)  # deliberately off the 7i prior centre (~140)
+    total = carry + rng.normal(4, 1.5, 50)
+    lateral = rng.normal(0, 8, 50)
+    s = prior_for("7i", 15, 215.0)
+    for c, t, lat in zip(carry, total, lateral, strict=True):
+        s = update_club_stats(s, float(c), float(t), float(lat))
+    mu_c = params_from_stats(s)[0]
+    assert abs(mu_c - carry.mean()) / carry.mean() < 0.03
