@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from caddie.mdp import DIRECTIONS_DEG
+from caddie.mdp import DIRECTIONS_DEG, Lie
 from caddie.online import bilinear, recommend
 from caddie.value_iteration import solve
 from tests.fixtures.toy_hole import toy_hole, toy_player
@@ -132,3 +132,45 @@ def test_recommend_is_deterministic_for_a_seed(toy_drop):
     c = recommend(solution, hole, player, 12.0, 17.0, None, "replay", m=50, seed=6)
     np.testing.assert_array_equal(a.q_by_action, b.q_by_action)
     assert not np.array_equal(a.q_by_action, c.q_by_action)
+
+
+# --- slice 3: recommend between cells ---------------------------------------------------------
+
+
+def _adjacent_cells_with_different_policies(solution, hole):
+    """First horizontally adjacent playable pair whose grid directions differ."""
+    flat = hole.lie.reshape(-1)
+    for r in range(hole.rows):
+        for c in range(hole.cols - 1):
+            i, j = r * hole.cols + c, r * hole.cols + c + 1
+            if (
+                flat[i] in (1, 2, 3, 4)
+                and flat[j] in (1, 2, 3, 4)
+                and solution.dir[i] != solution.dir[j]
+            ):
+                return i, j
+    raise AssertionError("toy hole has no adjacent pair with different policies")
+
+
+def test_recommend_between_cells_lies_between_the_cell_values(toy_drop):
+    solution, hole, player = toy_drop
+    i, j = _adjacent_cells_with_different_policies(solution, hole)
+    r, c = divmod(i, hole.cols)
+    x, y = (c + 1.0) * hole.cell_m, (r + 0.5) * hole.cell_m  # the shared edge midpoint
+    rec = recommend(solution, hole, player, x, y, None, "drop", m=400, seed=0)
+    lo, hi = sorted((float(solution.U[i]), float(solution.U[j])))
+    assert lo - 0.05 <= rec.expected_strokes <= hi + 0.05
+
+
+# --- slice 4: lie override -----------------------------------------------------------------------
+
+
+def test_lie_override_rough_costs_more_than_the_fairway(toy_drop):
+    solution, hole, player = toy_drop
+    x, y = 12.0, 17.0  # fairway
+    fairway = recommend(solution, hole, player, x, y, None, "drop", m=400, seed=2)
+    rough = recommend(solution, hole, player, x, y, Lie.ROUGH, "drop", m=400, seed=2)
+    bunker = recommend(solution, hole, player, x, y, Lie.BUNKER, "drop", m=400, seed=2)
+    assert rough.expected_strokes > fairway.expected_strokes
+    assert bunker.expected_strokes > fairway.expected_strokes
+    assert fairway.club == rough.club == bunker.club
