@@ -1,5 +1,6 @@
 """Tests for caddie.dispersion (part 02)."""
 
+import json
 from pathlib import Path
 
 import numpy as np
@@ -252,3 +253,120 @@ def test_interpolate_clubs_ratios_and_partial_wedges():
     # 8i sits between 7i and 9i in mu_c, so its other parameters do too
     assert 5.0 <= clubs["8i"].sigma_theta_deg <= 5.5
     assert 3.0 <= clubs["8i"].mu_r <= 5.0
+
+
+# slice 7 -------------------------------------------------------------------
+
+CONTRACT_PUTTING = {
+    "distance_m": [1, 2, 3, 4, 6, 8, 10, 15, 25],
+    "expected_putts": [1.07, 1.41, 1.64, 1.78, 1.85, 1.93, 1.98, 2.15, 2.4],
+}
+
+
+class StubPutting:
+    """Stands in for part 03's PuttingTable: only `to_json` is needed here."""
+
+    def to_json(self) -> dict:
+        return dict(CONTRACT_PUTTING)
+
+
+@pytest.fixture(scope="module")
+def synthetic_shots_csv(tmp_path_factory):
+    rng = np.random.default_rng(9)
+    spec = {
+        "driver": (100, 215.0, 0.07, 0.10, 6.5, 18.0, 8.0, "tee"),
+        "5h": (50, 172.0, 0.065, 0.08, 6.0, 10.0, 5.0, "mat"),
+        "7i": (50, 140.0, 0.06, 0.07, 5.5, 5.0, 2.5, "mat"),
+        "9i": (50, 118.0, 0.06, 0.06, 5.0, 3.0, 2.0, "mat"),
+        "sw": (50, 86.0, 0.07, 0.06, 5.0, 1.5, 1.5, "mat"),
+    }
+    lines = ["club,carry_m,total_m,lateral_m,lie,date"]
+    for club, (n, mu, sd, p, st, mr, sr, lie) in spec.items():
+        for row in _synthetic_shots(rng, n, mu, sd, p, st, mr, sr, lie):
+            lines.append(
+                f"{club},{row['carry_m']:.2f},{row['total_m']:.2f},{row['lateral_m']:.2f},{lie},2026-11-01"
+            )
+    for row in _synthetic_shots(rng, 20, 140.0 * 0.9, 0.078, 0.07, 7.0, 2.5, 2.0, "rough"):
+        lines.append(
+            f"7i,{row['carry_m']:.2f},{row['total_m']:.2f},{row['lateral_m']:.2f},rough,2026-11-01"
+        )
+    path = tmp_path_factory.mktemp("shots") / "shots.csv"
+    path.write_text("\n".join(lines) + "\n")
+    return path
+
+
+CLUB_KEYS = {"mu_c", "sigma_theta_deg", "sigma_d", "p", "mu_r", "sigma_r", "sampled", "stats"}
+NIG_KEYS = {"m", "kappa", "alpha", "beta"}
+
+
+def test_player_json_matches_contract(synthetic_shots_csv, tmp_path):
+    from caddie.dispersion import CLUB_ORDER, build_player, write_player_json
+
+    player = build_player(synthetic_shots_csv, StubPutting(), handicap=15)
+    out = tmp_path / "player.json"
+    write_player_json(player, out)
+    doc = json.loads(out.read_text())
+    assert set(doc) == {"handicap", "clubs", "club_order", "lie", "putting"}
+    assert doc["handicap"] == 15
+    assert doc["club_order"] == CLUB_ORDER and set(doc["clubs"]) == set(CLUB_ORDER)
+    for club, cp in doc["clubs"].items():
+        assert set(cp) == CLUB_KEYS, club
+        if cp["sampled"]:
+            st = cp["stats"]
+            assert set(st) == {"n", "carry", "theta", "roll"}
+            assert st["n"] in (50, 100)
+            assert set(st["carry"]) == NIG_KEYS and set(st["roll"]) == NIG_KEYS
+            assert set(st["theta"]) == {"alpha", "beta"}
+        else:
+            assert cp["stats"] is None
+    assert set(doc["lie"]) == {"tee", "fairway", "rough", "bunker"}
+    for v in doc["lie"].values():
+        assert set(v) == {"carry", "sigma", "roll"}
+    assert doc["lie"]["tee"] == doc["lie"]["fairway"] == {"carry": 1.0, "sigma": 1.0, "roll": 1.0}
+    assert doc["lie"]["bunker"] == {"carry": 0.8, "sigma": 1.6, "roll": 0.0}
+    assert 0.85 <= doc["lie"]["rough"]["carry"] <= 0.95
+    assert doc["putting"] == CONTRACT_PUTTING
+    # point estimates are consistent with the stored posterior state
+    drv = doc["clubs"]["driver"]
+    assert drv["mu_c"] == pytest.approx(drv["stats"]["carry"]["m"])
+    assert abs(drv["mu_c"] - 215.0) < 5
+
+
+def test_player_sample_written_to_out(synthetic_shots_csv):
+    """The part's Done-when artifact: solver/out/player.sample.json from synthetic data."""
+    from caddie.dispersion import build_player, write_player_json
+
+    out = Path(__file__).resolve().parents[1] / "out" / "player.sample.json"
+    write_player_json(build_player(synthetic_shots_csv, StubPutting(), 15), out)
+    assert json.loads(out.read_text())["clubs"]["7i"]["sampled"] is True
+
+
+# slice 8 -------------------------------------------------------------------
+
+
+def test_stats_updates_fixture_is_reproducible(tmp_path):
+    from caddie.dispersion import write_stats_updates_fixture
+
+    committed = FIXTURES / "stats_updates.json"
+    regenerated = tmp_path / "stats_updates.json"
+    write_stats_updates_fixture(regenerated)
+    assert json.loads(committed.read_text()) == json.loads(regenerated.read_text())
+
+
+def test_stats_updates_fixture_shape():
+    from caddie.dispersion import IG, NIG, ClubStats, update_club_stats
+
+    doc = json.loads((FIXTURES / "stats_updates.json").read_text())
+    assert doc["club"] == "driver" and len(doc["observations"]) == 5
+    assert len(doc["after"]) == 5
+    s = ClubStats(
+        n=doc["prior"]["n"],
+        carry=NIG(**doc["prior"]["carry"]),
+        theta=IG(**doc["prior"]["theta"]),
+        roll=NIG(**doc["prior"]["roll"]),
+    )
+    for obs, after in zip(doc["observations"], doc["after"], strict=True):
+        s = update_club_stats(s, *obs)
+        assert s.n == after["n"]
+        assert abs(s.carry.m - after["carry"]["m"]) < 1e-9
+        assert abs(s.theta.beta - after["theta"]["beta"]) < 1e-9

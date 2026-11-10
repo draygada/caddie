@@ -13,9 +13,11 @@ other carry parameters held at their posterior means.
 from __future__ import annotations
 
 import csv
+import json
 import logging
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Protocol
 
 import numpy as np
 from scipy.optimize import minimize_scalar
@@ -334,3 +336,137 @@ def interpolate_clubs(sampled: dict[str, ClubParams]) -> dict[str, ClubParams]:
         interp = {f: float(np.interp(mu_c, xs, table[f])) for f in fields}
         out[club] = ClubParams(mu_c=mu_c, **interp, sampled=False, stats=None)
     return out
+
+
+# --- slice 7: Player and player.json -----------------------------------------------------
+
+SAMPLED_CLUBS: tuple[str, ...] = tuple(PRIOR_CARRY_FRACTION_OF_DRIVER)
+SIGMA_THETA_SANE: tuple[float, float] = (3.0, 12.0)
+
+
+class PuttingLike(Protocol):
+    """What part 02 needs from part 03's PuttingTable (which it cannot import)."""
+
+    def to_json(self) -> dict: ...
+
+
+@dataclass
+class Player:
+    handicap: int
+    clubs: dict[str, ClubParams]
+    club_order: list[str]
+    lie: dict[str, dict[str, float]]  # multipliers per lie: carry, sigma, roll
+    putting: PuttingLike
+
+
+def build_player(shots_path: Path, putting: PuttingLike, handicap: int) -> Player:
+    shots = load_shots(shots_path)
+    missing = [c for c in SAMPLED_CLUBS if c not in shots]
+    if missing:
+        raise ValueError(f"{shots_path}: no rows for sampled clubs {missing}")
+    driver_mu_hint = float(np.mean(shots["driver"]["carry_m"]))
+    sampled: dict[str, ClubParams] = {}
+    for club in SAMPLED_CLUBS:
+        rows = shots[club][shots[club]["lie"] != "rough"]
+        cp = fit_club(club, rows, handicap, driver_mu_hint)
+        lo, hi = SIGMA_THETA_SANE
+        if not lo <= cp.sigma_theta_deg <= hi:
+            log.warning(
+                "%s: sigma_theta %.1f deg outside [%g, %g]", club, cp.sigma_theta_deg, lo, hi
+            )
+        if cp.p <= P_BOUNDS[0] + 1e-6 or cp.p >= P_BOUNDS[1] - 1e-6:
+            log.warning("%s: p = %.3f pinned at a bound of %s", club, cp.p, P_BOUNDS)
+        sampled[club] = cp
+    rough_rows = shots["7i"][shots["7i"]["lie"] == "rough"]
+    rough = fit_rough_multipliers(sampled["7i"], rough_rows, handicap)
+    lie = {
+        "tee": {"carry": 1.0, "sigma": 1.0, "roll": 1.0},
+        "fairway": {"carry": 1.0, "sigma": 1.0, "roll": 1.0},
+        "rough": rough,
+        "bunker": dict(BUNKER_MULTIPLIERS),
+    }
+    return Player(
+        handicap=handicap,
+        clubs=interpolate_clubs(sampled),
+        club_order=list(CLUB_ORDER),
+        lie=lie,
+        putting=putting,
+    )
+
+
+def _stats_to_json(stats: ClubStats | None) -> dict | None:
+    if stats is None:
+        return None
+    return {
+        "n": stats.n,
+        "carry": asdict(stats.carry),
+        "theta": asdict(stats.theta),
+        "roll": asdict(stats.roll),
+    }
+
+
+def player_to_json(player: Player) -> dict:
+    clubs = {}
+    for club in player.club_order:
+        cp = player.clubs[club]
+        clubs[club] = {
+            "mu_c": cp.mu_c,
+            "sigma_theta_deg": cp.sigma_theta_deg,
+            "sigma_d": cp.sigma_d,
+            "p": cp.p,
+            "mu_r": cp.mu_r,
+            "sigma_r": cp.sigma_r,
+            "sampled": cp.sampled,
+            "stats": _stats_to_json(cp.stats),
+        }
+    return {
+        "handicap": player.handicap,
+        "clubs": clubs,
+        "club_order": list(player.club_order),
+        "lie": {k: dict(v) for k, v in player.lie.items()},
+        "putting": player.putting.to_json(),
+    }
+
+
+def write_player_json(player: Player, path: Path) -> None:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(player_to_json(player), indent=2) + "\n")
+
+
+# --- slice 8: fixture for the TS port ------------------------------------------------------
+
+# Five driver observations (carry_m, total_m, lateral_m) used only by the fixture.
+STATS_FIXTURE_OBS: tuple[tuple[float, float, float], ...] = (
+    (212.4, 231.0, -8.2),
+    (219.9, 236.5, 4.1),
+    (198.3, 214.0, 15.6),
+    (225.0, 240.3, -2.0),
+    (170.0, 188.0, 20.0),
+)
+
+
+def write_stats_updates_fixture(path: Path, driver_mu_hint: float = 215.0) -> None:
+    """docs/fixtures/stats_updates.json: driver prior, 5 observations, ClubStats after each.
+
+    The stretch goal's learn.ts must reproduce the `after` states to 1e-9.
+    """
+    prior = prior_for("driver", 15, driver_mu_hint)
+    after = []
+    s = prior
+    for carry, total, lateral in STATS_FIXTURE_OBS:
+        s = update_club_stats(s, carry, total, lateral)
+        after.append(_stats_to_json(s))
+    doc = {
+        "club": "driver",
+        "handicap": 15,
+        "driver_mu_hint": driver_mu_hint,
+        "observation_columns": ["carry_m", "total_m", "lateral_m"],
+        "theta_rule": "theta_deg = degrees(atan2(lateral_m, carry_m)); roll = total_m - carry_m",
+        "prior": _stats_to_json(prior),
+        "observations": [list(o) for o in STATS_FIXTURE_OBS],
+        "after": after,
+    }
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(doc, indent=2) + "\n")
