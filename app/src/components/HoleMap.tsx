@@ -6,6 +6,7 @@ import {
   type ImageSource,
   type ExpressionSpecification,
   type GeoJSONSource,
+  LngLatBounds,
   Map as MLMap,
   NavigationControl,
   setWorkerUrl,
@@ -25,6 +26,15 @@ export const ESRI_TILES =
 export const ESRI_ATTRIBUTION = 'Esri, Maxar, Earthstar Geographics'
 export const MAX_ZOOM = 19
 export const HEAT_OPACITY = 0.55
+export const FIT_PADDING_PX = 40
+
+/** Bearing = hole bearing, so +y points up the screen, then fit the rotated grid. */
+export function fitToGrid(map: MLMap, meta: Meta): void {
+  const bounds = new LngLatBounds()
+  for (const [lon, lat] of gridCorners(meta)) bounds.extend([lon, lat])
+  map.setBearing(meta.rotation_deg)
+  map.fitBounds(bounds, { padding: FIT_PADDING_PX, bearing: meta.rotation_deg, duration: 0 })
+}
 
 /** Fill colour per polygon kind, drawn at low opacity over the imagery. */
 export const LIE_COLOURS: Record<string, string> = {
@@ -181,7 +191,7 @@ export function HoleMap({ bundle, tee }: HoleMapProps) {
           },
         })
       }
-      map.jumpTo({ center: [bundle.meta.origin.lon, bundle.meta.origin.lat], zoom: 16 })
+      fitToGrid(map, bundle.meta)
     }
     if (map.isStyleLoaded()) apply()
     else map.once('load', apply)
