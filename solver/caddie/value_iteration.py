@@ -20,6 +20,7 @@ import numpy as np
 from caddie.dispersion import Player
 from caddie.geometry import Hole
 from caddie.mdp import (
+    CANDIDATE_CARRY_FACTOR,
     DIRECTIONS_DEG,
     Lie,
     OffsetTables,
@@ -73,6 +74,21 @@ def all_actions(player: Player) -> np.ndarray:
         np.arange(len(player.club_order)), np.arange(len(DIRECTIONS_DEG)), indexing="ij"
     )
     return np.column_stack((clubs.ravel(), dirs.ravel())).astype(np.int64)
+
+
+def club_cells(hole: Hole, player: Player, cells: np.ndarray, club_idx: int) -> np.ndarray:
+    """Cells where ``club_idx`` is a candidate (Part 04 rule: mu_c <= 1.3 x distance to pin).
+
+    The shortest club is kept everywhere so no cell is left without an action.
+    """
+    mu = np.array([player.clubs[name].mu_c for name in player.club_order])
+    if club_idx == int(np.argmin(mu)):
+        return cells
+    r, c = np.divmod(cells, hole.cols)
+    dist = np.hypot(
+        (c + 0.5) * hole.cell_m - hole.pin_xy[0], (r + 0.5) * hole.cell_m - hole.pin_xy[1]
+    )
+    return cells[mu[club_idx] <= CANDIDATE_CARRY_FACTOR * dist]
 
 
 def bellman_backup(
