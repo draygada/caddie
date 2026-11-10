@@ -247,3 +247,42 @@ def fit_club(club: str, shots: np.ndarray, handicap: int, driver_mu_hint: float)
         sampled=True,
         stats=stats,
     )
+
+
+# --- slice 5: rough multipliers ----------------------------------------------------------
+
+# Root contract defaults, used when fewer than MIN_ROUGH_SHOTS rough rows exist.
+ROUGH_DEFAULTS: dict[str, float] = {"carry": 0.9, "sigma": 1.3, "roll": 0.5}
+BUNKER_MULTIPLIERS: dict[str, float] = {"carry": 0.8, "sigma": 1.6, "roll": 0.0}
+MIN_ROUGH_SHOTS = 15
+
+
+def fit_rough_multipliers(
+    mat7i: ClubParams, rough_shots: np.ndarray, handicap: int = 15
+) -> dict[str, float]:
+    """Lie multipliers for rough from the 7i rough sample against the 7i mat fit.
+
+    carry = mu_c_rough / mu_c_mat; sigma = mean of the sigma_theta and sigma_d ratios;
+    roll = mu_r_rough / mu_r_mat clipped to [0, 1]. The rough fit's prior is centred
+    on the mat fit scaled by the default multipliers, so a thin sample shrinks toward
+    the contract defaults rather than toward the mat values.
+    """
+    if len(rough_shots) < MIN_ROUGH_SHOTS:
+        log.warning(
+            "only %d rough shots (< %d): using default rough multipliers",
+            len(rough_shots),
+            MIN_ROUGH_SHOTS,
+        )
+        return dict(ROUGH_DEFAULTS)
+    stats = prior_for("7i", handicap, mat7i.mu_c / PRIOR_CARRY_FRACTION_OF_DRIVER["7i"])
+    stats.carry.m *= ROUGH_DEFAULTS["carry"]
+    stats.roll.m *= ROUGH_DEFAULTS["roll"]
+    for row in rough_shots:
+        stats = update_club_stats(
+            stats, float(row["carry_m"]), float(row["total_m"]), float(row["lateral_m"])
+        )
+    mu_c, sigma_theta, sigma_d, mu_r, _ = params_from_stats(stats)
+    carry = mu_c / mat7i.mu_c
+    sigma = 0.5 * (sigma_theta / mat7i.sigma_theta_deg + sigma_d / mat7i.sigma_d)
+    roll = float(np.clip(mu_r / mat7i.mu_r, 0.0, 1.0)) if mat7i.mu_r > 0 else 0.0
+    return {"carry": carry, "sigma": sigma, "roll": roll}

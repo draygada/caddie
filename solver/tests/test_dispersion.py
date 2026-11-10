@@ -168,3 +168,41 @@ def test_fit_club_round_trips_synthetic_data():
     assert abs(cp.mu_r - 5.0) < 1.0
     assert abs(cp.sigma_r - 2.0) < 0.7
     assert 0.02 <= cp.p <= 0.25
+
+
+# slice 5 -------------------------------------------------------------------
+
+
+def _synthetic_shots(rng, n, mu_c, sigma_d, p, sigma_theta, mu_r, sigma_r, lie="mat"):
+    from caddie.dispersion import SHOT_DTYPE
+
+    carry = _mixture_carries(rng, n, mu_c, sigma_d, p)
+    theta = rng.normal(0, sigma_theta, n)
+    lateral = carry * np.tan(np.radians(theta))
+    total = carry + rng.normal(mu_r, sigma_r, n)
+    return np.array(
+        [(c, t, lat, lie, "2026-11-01") for c, t, lat in zip(carry, total, lateral, strict=True)],
+        dtype=SHOT_DTYPE,
+    )
+
+
+def test_fit_rough_multipliers_recovers_carry_ratio():
+    from caddie.dispersion import fit_club, fit_rough_multipliers
+
+    rng = np.random.default_rng(7)
+    mat = fit_club("7i", _synthetic_shots(rng, 50, 140.0, 0.06, 0.05, 6.0, 5.0, 2.0), 15, 215.0)
+    rough = _synthetic_shots(rng, 20, 140.0 * 0.88, 0.08, 0.05, 8.0, 2.5, 2.0, lie="rough")
+    mult = fit_rough_multipliers(mat, rough)
+    assert set(mult) == {"carry", "sigma", "roll"}
+    assert abs(mult["carry"] - 0.88) < 0.03
+    assert mult["sigma"] > 1.0
+    assert 0.0 <= mult["roll"] <= 1.0
+
+
+def test_fit_rough_multipliers_defaults_below_15_shots():
+    from caddie.dispersion import ROUGH_DEFAULTS, fit_club, fit_rough_multipliers
+
+    rng = np.random.default_rng(8)
+    mat = fit_club("7i", _synthetic_shots(rng, 50, 140.0, 0.06, 0.05, 6.0, 5.0, 2.0), 15, 215.0)
+    rough = _synthetic_shots(rng, 14, 120.0, 0.08, 0.05, 8.0, 2.5, 2.0, lie="rough")
+    assert fit_rough_multipliers(mat, rough) == ROUGH_DEFAULTS
