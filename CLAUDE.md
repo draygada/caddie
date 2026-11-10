@@ -93,7 +93,7 @@ Binary files next to it, all `rows x cols`, row-major, little-endian:
 | `club.u8` | uint8 | index into `meta.clubs`; 255 for terminal or out-of-grid |
 | `dir.u8` | uint8 | index into `meta.directions_deg`; 255 for terminal or out-of-grid |
 
-Grid to lat/lon: `x_east = x cos(rot) - y sin(rot)`, `y_north = x sin(rot) + y cos(rot)` with `rot = rotation_deg` in radians, then `lat = origin.lat + y_north / 111320`, `lon = origin.lon + x_east / (111320 cos(origin.lat))`. Exact enough over 600 m. Both halves implement this and are tested against the same three fixture points in `docs/fixtures/geo_points.json`.
+Grid to lat/lon: `x_east = x cos(rot) + y sin(rot)`, `y_north = -x sin(rot) + y cos(rot)` with `rot = rotation_deg` in radians (the inverse of `rotate` in `geometry.py`, which turns east/north into grid x/y), then `lat = origin.lat + y_north / 111320`, `lon = origin.lon + x_east / (111320 cos(origin.lat))`. Exact enough over 600 m. Both halves implement this and are tested against the same three fixture points in `docs/fixtures/geo_points.json`.
 
 ## Part index
 
