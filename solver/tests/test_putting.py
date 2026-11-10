@@ -1,11 +1,13 @@
 """Tests for caddie.putting (part 03)."""
 
+import json
 from pathlib import Path
 
 import numpy as np
 import pytest
 
 from caddie.putting import (
+    CONTRACT_DISTANCES_M,
     FT_TO_M,
     GRID_MAX_M,
     GRID_STEP_M,
@@ -14,6 +16,7 @@ from caddie.putting import (
     load_make_table,
     make_prob,
     solve_expected_putts,
+    write_putting_png,
 )
 
 DATA = Path(__file__).resolve().parents[1] / "data" / "raw" / "putting.csv"
@@ -128,3 +131,29 @@ def test_call_extrapolates_linearly_beyond_grid(table):
     assert table(50.0) == pytest.approx(table.expected_putts[-1] + 10.0 * slope)
     assert np.ndim(table(np.array([1.0, 2.0]))) == 1
     assert table(-1.0) == pytest.approx(table.expected_putts[0])
+
+
+# slice 4: serialize
+
+
+def test_to_json_matches_contract_shape(table):
+    block = table.to_json()
+    assert set(block) == {"distance_m", "expected_putts"}
+    assert block["distance_m"] == list(CONTRACT_DISTANCES_M) == [1, 2, 3, 4, 6, 8, 10, 15, 25]
+    assert len(block["expected_putts"]) == 9
+    assert all(isinstance(v, float) for v in block["expected_putts"])
+    assert all(isinstance(v, int) for v in block["distance_m"])
+    assert block["expected_putts"] == sorted(block["expected_putts"])
+    json.dumps(block)
+
+
+def test_to_json_values_match_table(table):
+    block = table.to_json()
+    for d, e in zip(block["distance_m"], block["expected_putts"], strict=True):
+        assert e == pytest.approx(float(table(d)), abs=1e-3)
+
+
+def test_putting_png_written(table):
+    out = Path(__file__).resolve().parents[1] / "out" / "putting.png"
+    write_putting_png(table, out)
+    assert out.exists() and out.stat().st_size > 1000

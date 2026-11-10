@@ -28,6 +28,7 @@ LEAVE_FRAC = 0.12
 LEAVE_MIN_M = 0.6
 FIXED_POINT_TOL = 1e-9
 FIXED_POINT_MAX_ITER = 1000
+CONTRACT_DISTANCES_M = (1, 2, 3, 4, 6, 8, 10, 15, 25)
 
 
 def load_make_table(path: Path) -> tuple[np.ndarray, np.ndarray]:
@@ -124,6 +125,14 @@ class PuttingTable:
         beyond = self.expected_putts[-1] + slope * (d - self.distance_m[-1])
         return np.where(d > self.distance_m[-1], beyond, inside)
 
+    def to_json(self) -> dict:
+        """The ``putting`` block of ``player.json`` at the contract's nine distances."""
+        values = self(np.asarray(CONTRACT_DISTANCES_M, dtype=float))
+        return {
+            "distance_m": [int(d) for d in CONTRACT_DISTANCES_M],
+            "expected_putts": [round(float(v), 3) for v in values],
+        }
+
 
 def build_putting_table(
     path: Path, leave_frac: float = LEAVE_FRAC, leave_min_m: float = LEAVE_MIN_M
@@ -133,3 +142,27 @@ def build_putting_table(
     grid = np.arange(0.0, GRID_MAX_M + GRID_STEP_M / 2, GRID_STEP_M)
     expected, _ = solve_expected_putts(grid, mids_m, probs, leave_frac, leave_min_m)
     return PuttingTable(distance_m=grid, expected_putts=expected)
+
+
+def write_putting_png(table: PuttingTable, path: Path) -> None:
+    """Plot E[putts] against distance (the part's Done-when check)."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig, ax = plt.subplots(figsize=(7, 4))
+    ax.plot(table.distance_m, table.expected_putts, lw=2)
+    block = table.to_json()
+    ax.plot(block["distance_m"], block["expected_putts"], "o", label="player.json points")
+    ax.set_xlabel("distance to pin (m)")
+    ax.set_ylabel("expected putts")
+    ax.set_title("Expected putts from the Shot Scope make-rate table")
+    ax.grid(alpha=0.3)
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(path, dpi=120)
+    plt.close(fig)
+    log.info("wrote %s", path)
