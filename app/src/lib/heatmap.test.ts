@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import { colourScale, STOPS } from './heatmap'
+import { colourScale, paintHeatmap, STOPS } from './heatmap'
+import { readToyBundle } from './toyFiles'
 
 type RGBA = [number, number, number, number]
 
@@ -47,5 +48,89 @@ describe('colourScale', () => {
   it('follows par', () => {
     expect(colourScale(3)(2)).toEqual([...first, 255] as RGBA)
     expect(colourScale(5)(8)).toEqual([...last, 255] as RGBA)
+  })
+})
+
+/** Minimal 2d context: enough for putImageData / getImageData round trips. */
+class FakeContext {
+  data: Uint8ClampedArray
+  constructor(
+    readonly width: number,
+    readonly height: number,
+  ) {
+    this.data = new Uint8ClampedArray(width * height * 4)
+  }
+  createImageData(w: number, h: number) {
+    return { width: w, height: h, data: new Uint8ClampedArray(w * h * 4), colorSpace: 'srgb' as const }
+  }
+  putImageData(img: { width: number; height: number; data: Uint8ClampedArray }, dx: number, dy: number) {
+    for (let y = 0; y < img.height; y++)
+      for (let x = 0; x < img.width; x++) {
+        const s = (y * img.width + x) * 4
+        const d = ((y + dy) * this.width + (x + dx)) * 4
+        this.data.set(img.data.subarray(s, s + 4), d)
+      }
+  }
+  getImageData(sx: number, sy: number, w: number, h: number) {
+    const out = new Uint8ClampedArray(w * h * 4)
+    for (let y = 0; y < h; y++)
+      for (let x = 0; x < w; x++) {
+        const s = ((y + sy) * this.width + (x + sx)) * 4
+        out.set(this.data.subarray(s, s + 4), (y * w + x) * 4)
+      }
+    return { width: w, height: h, data: out, colorSpace: 'srgb' as const }
+  }
+  clearRect() {
+    this.data.fill(0)
+  }
+}
+
+class FakeCanvas {
+  width = 0
+  height = 0
+  ctx: FakeContext | null = null
+  getContext(kind: string) {
+    if (kind !== '2d') return null
+    this.ctx ??= new FakeContext(this.width, this.height)
+    return this.ctx
+  }
+}
+
+function pixel(canvas: FakeCanvas, x: number, y: number): RGBA {
+  const d = canvas.getContext('2d')?.getImageData(x, y, 1, 1).data
+  if (!d) throw new Error('no context')
+  return [d[0], d[1], d[2], d[3]]
+}
+
+describe('paintHeatmap', () => {
+  const b = readToyBundle()
+  const scale = colourScale(b.meta.par)
+
+  it('paints one pixel per cell with row 0 at the bottom', () => {
+    const canvas = new FakeCanvas()
+    paintHeatmap(b, canvas as unknown as HTMLCanvasElement, scale)
+    expect([canvas.width, canvas.height]).toEqual([b.meta.cols, b.meta.rows])
+    // bottom-left pixel (0, 9) is cell (0, 0); top-left pixel (0, 0) is cell (9, 0)
+    expect(pixel(canvas, 0, 9)).toEqual(scale(b.value[0]))
+    expect(pixel(canvas, 0, 0)).toEqual(scale(b.value[9 * b.meta.cols]))
+    // the pin cell (9, 5) is pixel (5, 0): 1.5 strokes, the bright end
+    expect(pixel(canvas, 5, 0)).toEqual(scale(1.5))
+    expect(pixel(canvas, 5, 0)).toEqual([...STOPS[0], 255] as RGBA)
+  })
+
+  it('leaves NaN cells transparent', () => {
+    const canvas = new FakeCanvas()
+    paintHeatmap(b, canvas as unknown as HTMLCanvasElement, scale)
+    expect(pixel(canvas, 9, 5)[3]).toBe(0) // OB column
+    expect(pixel(canvas, 0, 2)[3]).toBe(0) // water cell (7, 0) is pixel (0, 2)
+    expect(pixel(canvas, 4, 2)[3]).toBe(255) // fairway (7, 4) next to it
+  })
+
+  it('matches the whole grid pixel by pixel', () => {
+    const canvas = new FakeCanvas()
+    paintHeatmap(b, canvas as unknown as HTMLCanvasElement, scale)
+    for (let r = 0; r < b.meta.rows; r++)
+      for (let c = 0; c < b.meta.cols; c++)
+        expect(pixel(canvas, c, b.meta.rows - 1 - r)).toEqual(scale(b.value[r * b.meta.cols + c]))
   })
 })

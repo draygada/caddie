@@ -40,3 +40,40 @@ export function colourScale(par: number): (strokes: number) => RGBA {
 
 export type ColourScale = ReturnType<typeof colourScale>
 export type { HoleBundle }
+
+type Canvas2D = OffscreenCanvas | HTMLCanvasElement
+
+/**
+ * One pixel per cell. Row 0 (the tee end) is the BOTTOM row of the canvas, so the
+ * image lines up with `gridCorners` (TL, TR, BR, BL) when used as a MapLibre image source.
+ */
+export function paintHeatmap(b: HoleBundle, canvas: Canvas2D, scale: ColourScale): void {
+  const { rows, cols } = b.meta
+  canvas.width = cols
+  canvas.height = rows
+  const ctx = canvas.getContext('2d') as
+    | (CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D)
+    | null
+  if (!ctx) throw new Error('canvas has no 2d context')
+  const img = ctx.createImageData(cols, rows)
+  const px = img.data
+  for (let r = 0; r < rows; r++) {
+    const y = rows - 1 - r
+    for (let c = 0; c < cols; c++) {
+      const [red, green, blue, alpha] = scale(b.value[r * cols + c])
+      const o = (y * cols + c) * 4
+      px[o] = red
+      px[o + 1] = green
+      px[o + 2] = blue
+      px[o + 3] = alpha
+    }
+  }
+  ctx.putImageData(img, 0, 0)
+}
+
+/** PNG data URL of the heatmap, for `map.addSource('heat', {type: 'image', url})`. Browser only. */
+export function heatmapDataUrl(b: HoleBundle): string {
+  const canvas = document.createElement('canvas')
+  paintHeatmap(b, canvas, colourScale(b.meta.par))
+  return canvas.toDataURL('image/png')
+}
