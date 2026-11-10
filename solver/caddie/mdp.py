@@ -20,7 +20,7 @@ from typing import Literal
 import numpy as np
 from scipy.stats import norm, qmc
 
-from caddie.dispersion import MISHIT_MEAN
+from caddie.dispersion import MISHIT_MEAN, ClubParams
 
 log = logging.getLogger(__name__)
 
@@ -67,3 +67,27 @@ def make_draws(K: int, seed: int = 0) -> Draws:
     pts = qmc.Halton(d=4, scramble=True, seed=seed).random(K)
     normals = norm.ppf(pts[:, :3])
     return Draws(theta=normals[:, 0], z=normals[:, 1], u=pts[:, 3], roll=normals[:, 2])
+
+
+def aim_unit(dir_deg: float | np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Unit aim vector (sin d, cos d) for a direction relative to the pin bearing (+y)."""
+    b = np.radians(dir_deg)
+    return np.sin(b), np.cos(b)
+
+
+def landing_offsets(
+    club: ClubParams, lie_mult: dict[str, float], draws: Draws, dir_deg: float
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """(dx, dy, roll_m), each (K,), for one club, from-lie and aim direction.
+
+    Carry and direction spread use the from-lie multipliers. The roll here
+    is scaled by the from-lie roll multiplier only; :func:`apply_roll` scales
+    it again by the landing lie.
+    """
+    carry = (
+        club.mu_c * lie_mult["carry"] * (1.0 + club.sigma_d * lie_mult["sigma"] * draws.x(club.p))
+    )
+    theta_deg = club.sigma_theta_deg * lie_mult["sigma"] * draws.theta
+    sx, cy = aim_unit(dir_deg + theta_deg)
+    roll_m = (club.mu_r + club.sigma_r * draws.roll) * lie_mult["roll"]
+    return carry * sx, carry * cy, roll_m

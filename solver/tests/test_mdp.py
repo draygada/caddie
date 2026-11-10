@@ -3,7 +3,8 @@
 import numpy as np
 import pytest
 
-from caddie.mdp import DIRECTIONS_DEG, Draws, Lie, make_draws
+from caddie.dispersion import ClubParams
+from caddie.mdp import DIRECTIONS_DEG, Draws, Lie, landing_offsets, make_draws
 
 # slice 1: Lie enum, directions, draws
 
@@ -42,3 +43,44 @@ def test_make_draws_deterministic_for_seed():
     a, b = make_draws(50, seed=3), make_draws(50, seed=3)
     assert np.array_equal(a.theta, b.theta) and np.array_equal(a.u, b.u)
     assert not np.array_equal(a.theta, make_draws(50, seed=4).theta)
+
+
+# slice 2: landing offsets
+
+UNIT_LIE = {"carry": 1.0, "sigma": 1.0, "roll": 1.0}
+
+
+def club(mu_c=25.0, sigma_theta=4.0, sigma_d=0.05, p=0.05, mu_r=2.0, sigma_r=1.0) -> ClubParams:
+    return ClubParams(mu_c, sigma_theta, sigma_d, p, mu_r, sigma_r, sampled=True, stats=None)
+
+
+@pytest.fixture(scope="module")
+def draws() -> Draws:
+    return make_draws(200)
+
+
+def test_landing_offsets_degenerate_dir0(draws):
+    c = club(sigma_theta=0.0, sigma_d=0.0, sigma_r=0.0)
+    dx, dy, roll = landing_offsets(c, UNIT_LIE, draws, 0.0)
+    assert dx.shape == dy.shape == roll.shape == (200,)
+    assert np.allclose(dx, 0.0) and np.allclose(dy, c.mu_c)
+    assert np.allclose(roll, c.mu_r)
+
+
+def test_landing_offsets_degenerate_dir90(draws):
+    c = club(sigma_theta=0.0, sigma_d=0.0)
+    dx, dy, _ = landing_offsets(c, UNIT_LIE, draws, 90.0)
+    assert np.allclose(dx, c.mu_c) and np.allclose(dy, 0.0, atol=1e-9)
+
+
+def test_landing_offsets_spread_and_lie_multipliers(draws):
+    c = club()
+    dx, dy, roll = landing_offsets(c, UNIT_LIE, draws, 0.0)
+    carry = np.hypot(dx, dy)
+    assert abs(carry.mean() - c.mu_c * (1 - c.p * 2 * c.sigma_d)) < 0.5
+    assert dx.std() > 0.5 and dy.std() > 0.5
+    rough = {"carry": 0.9, "sigma": 1.3, "roll": 0.5}
+    dxr, dyr, rollr = landing_offsets(c, rough, draws, 0.0)
+    assert np.hypot(dxr, dyr).mean() < carry.mean()
+    assert dxr.std() > dx.std()
+    assert np.allclose(rollr, 0.5 * roll)
