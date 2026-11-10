@@ -38,12 +38,12 @@ def _simplify_ring(ring: list[tuple[float, float]]) -> list[list[float]]:
     return [[round(float(x), 2), round(float(y), 2)] for x, y in poly.exterior.coords]
 
 
-def meta_dict(solution: Solution, hole: Hole, player: Player) -> dict:
+def meta_dict(solution: Solution, hole: Hole, player: Player, label: str | None = None) -> dict:
     polygons = {
         kind: [_simplify_ring(r) for r in hole.polygons_xy.get(kind, [])] for kind in POLYGON_KINDS
     }
     return {
-        "hole": hole.number,
+        "hole": label if label is not None else hole.number,
         "par": hole.par,
         "penalty_mode": solution.mode,
         "rows": hole.rows,
@@ -60,15 +60,22 @@ def meta_dict(solution: Solution, hole: Hole, player: Player) -> dict:
     }
 
 
-def write_bundle(solution: Solution, hole: Hole, player: Player, out_dir: Path) -> None:
-    """Write ``out_dir/<hole>/<mode>/`` with the five contract files."""
+def write_bundle(
+    solution: Solution, hole: Hole, player: Player, out_dir: Path, label: str | None = None
+) -> None:
+    """Write ``out_dir/<hole>/<mode>/`` with the five contract files.
+
+    ``label`` replaces ``hole.number`` in the directory name and in ``meta.hole``; the CLI
+    passes ``"toy"`` for the test fixture hole so the app can address it as ``'toy'``.
+    """
     n = hole.rows * hole.cols
     for name, arr in (("U", solution.U), ("club", solution.club), ("dir", solution.dir)):
         if arr.shape != (n,):
             raise ValueError(f"solution.{name} has shape {arr.shape}, expected ({n},)")
-    d = bundle_dir(out_dir, hole.number, solution.mode)
+    d = bundle_dir(out_dir, label if label is not None else hole.number, solution.mode)
     d.mkdir(parents=True, exist_ok=True)
-    (d / "meta.json").write_text(json.dumps(meta_dict(solution, hole, player), indent=1) + "\n")
+    meta = meta_dict(solution, hole, player, label)
+    (d / "meta.json").write_text(json.dumps(meta, indent=1) + "\n")
     (d / "lie.u8").write_bytes(np.ascontiguousarray(hole.lie, dtype=np.uint8).tobytes())
     (d / "value.f32").write_bytes(np.ascontiguousarray(solution.U, dtype="<f4").tobytes())
     (d / "club.u8").write_bytes(np.ascontiguousarray(solution.club, dtype=np.uint8).tobytes())

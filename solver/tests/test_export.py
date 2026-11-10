@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import json
+import logging
 import struct
+from pathlib import Path
 
 import numpy as np
 import pytest
 
-from caddie.export import read_bundle, write_bundle, write_player
+from caddie.cli import main
+from caddie.dispersion import player_to_json
+from caddie.export import player_from_json, read_bundle, write_bundle, write_player
 from caddie.mdp import DIRECTIONS_DEG
 from caddie.value_iteration import solve
 from tests.fixtures.toy_hole import toy_hole, toy_player
@@ -31,6 +35,7 @@ META_KEYS = {
 }
 POLYGON_KEYS = {"fairway", "green", "bunker", "water", "ob", "tee", "rough"}
 BUNDLE_FILES = ("meta.json", "lie.u8", "value.f32", "club.u8", "dir.u8")
+SOLVER_DIR = Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture(scope="module")
@@ -126,3 +131,72 @@ def test_value_f32_byte_layout(toy_solution, tmp_path):
     # last cell in row-major order is (rows - 1, cols - 1): OB on the toy, so NaN
     last = struct.unpack("<f", raw[-4:])[0]
     assert np.isnan(last) and hole.lie[-1, -1] == 7
+
+
+# --- slice 3: CLI ---------------------------------------------------------------------------
+
+
+def test_write_bundle_label_names_the_toy_dir(toy_solution, tmp_path):
+    solution, hole, player = toy_solution
+    write_bundle(solution, hole, player, tmp_path, label="toy")
+    meta, *_ = read_bundle(tmp_path / "toy" / "drop")
+    assert meta["hole"] == "toy"
+
+
+def test_cli_solve_missing_player_exits_1(tmp_path, caplog):
+    caplog.set_level(logging.ERROR)
+    missing = tmp_path / "nope.json"
+    code = main(["solve", "10", "--mode", "drop", "--player", str(missing), "--out", str(tmp_path)])
+    assert code == 1
+    assert any(str(missing) in r.message for r in caplog.records)
+    assert not (tmp_path / "10").exists()
+
+
+def test_cli_hole_toy_writes_lie_png(tmp_path):
+    assert main(["hole", "toy", "--out", str(tmp_path)]) == 0
+    png = tmp_path / "toy_lie.png"
+    assert png.exists() and png.stat().st_size > 1000
+
+
+def test_cli_solve_toy_logs_every_5_sweeps_and_writes_bundle(tmp_path, caplog):
+    caplog.set_level(logging.INFO, logger="caddie.value_iteration")
+    code = main(["solve", "toy", "--mode", "replay", "--out", str(tmp_path)])
+    assert code == 0
+    sweeps_logged = [
+        int(r.message.split("sweep ")[1].split()[0])
+        for r in caplog.records
+        if r.name == "caddie.value_iteration" and "sweep" in r.message
+    ]
+    assert {5, 10} <= set(sweeps_logged)
+    assert all(s % 5 == 0 for s in sweeps_logged[:-1])  # only the final sweep may be off-cycle
+    meta, lie, value, club, direction = read_bundle(tmp_path / "toy" / "replay")
+    assert meta["penalty_mode"] == "replay" and meta["hole"] == "toy"
+    assert (tmp_path / "toy_replay_value.png").exists()
+
+
+def test_cli_fit_writes_player_json(tmp_path):
+    code = main(
+        [
+            "fit",
+            "--shots",
+            str(SOLVER_DIR / "tests" / "fixtures" / "shots_fixture.csv"),
+            "--putting",
+            str(SOLVER_DIR / "data" / "raw" / "putting.csv"),
+            "--handicap",
+            "15",
+            "--out",
+            str(tmp_path),
+        ]
+    )
+    assert code == 0
+    doc = json.loads((tmp_path / "player.json").read_text())
+    assert doc["handicap"] == 15 and len(doc["club_order"]) == 12
+    player = player_from_json(doc)
+    assert player.clubs["driver"].stats is not None
+    assert player_to_json(player) == doc  # full round trip, stats included
+
+
+def test_cli_export_solves_when_bundle_missing(tmp_path):
+    code = main(["export", "toy", "--mode", "drop", "--out", str(tmp_path)])
+    assert code == 0
+    assert all((tmp_path / "toy" / "drop" / f).exists() for f in BUNDLE_FILES)
