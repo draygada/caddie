@@ -12,6 +12,7 @@ draws. Terminal (green) cells keep ``terminal_values``. Values start at
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -23,6 +24,8 @@ from caddie.mdp import (
     Lie,
     OffsetTables,
     PenaltyMode,
+    build_offset_tables,
+    make_draws,
     step_batch,
     terminal_values,
 )
@@ -110,3 +113,53 @@ def bellman_backup(
     best_club[cells] = bc
     best_dir[cells] = bd
     return U_new, best_club, best_dir
+
+
+def solve(
+    hole: Hole,
+    player: Player,
+    mode: PenaltyMode,
+    K: int = 200,
+    tol: float = 0.01,
+    max_sweeps: int = 100,
+    seed: int = 0,
+    log_every: int = 5,
+) -> Solution:
+    """Value iteration to residual < ``tol``; returns strokes-to-go and the greedy policy."""
+    draws = make_draws(K, seed)
+    tables = build_offset_tables(player, draws)
+    candidates = all_actions(player)
+    playable, _ = state_mask(hole)
+    U = initial_values(hole, player)
+    club = np.full(U.shape, NO_ACTION, dtype=np.uint8)
+    direction = np.full(U.shape, NO_ACTION, dtype=np.uint8)
+    history: list[float] = []
+    sweeps = 0
+    for sweeps in range(1, max_sweeps + 1):
+        t0 = time.perf_counter()
+        U_new, club, direction = bellman_backup(U, hole, player, tables, mode, candidates)
+        residual = float(np.max(np.abs(U_new[playable] - U[playable])))
+        history.append(residual)
+        U = U_new
+        if sweeps % log_every == 0 or residual < tol:
+            log.info(
+                "hole %s %s sweep %d residual %.4f (%.2f s)",
+                hole.number,
+                mode,
+                sweeps,
+                residual,
+                time.perf_counter() - t0,
+            )
+        if residual < tol:
+            break
+    else:
+        log.warning("hole %s %s: no convergence in %d sweeps", hole.number, mode, max_sweeps)
+    return Solution(
+        hole=hole.number,
+        mode=mode,
+        U=(-U).astype(np.float32),
+        club=club,
+        dir=direction,
+        sweeps=sweeps,
+        residual_history=history,
+    )
