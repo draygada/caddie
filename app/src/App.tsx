@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 
+import { CaddiePanel } from './components/CaddiePanel'
 import { HoleMap } from './components/HoleMap'
 import { LieButtons } from './components/LieButtons'
 import { loadBundle, loadPlayer } from './lib/loader'
@@ -100,8 +101,11 @@ export default function App() {
         )}
         {error && <span className="text-sm text-rose-400">{error}</span>}
       </header>
-      <main className="relative flex-1">
-        <HoleMap bundle={bundle} tee={tee} />
+      <main className="flex min-h-0 flex-1">
+        <div className="relative min-w-0 flex-1">
+          <HoleMap bundle={bundle} tee={tee} />
+        </div>
+        <CaddiePanel />
       </main>
       <LieButtons />
     </div>

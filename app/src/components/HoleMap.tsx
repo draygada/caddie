@@ -17,6 +17,7 @@ import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url'
 import type { Feature as GJFeature, FeatureCollection, Geometry } from 'geojson'
 import { useEffect, useRef, useState } from 'react'
 
+import { AimArrow } from './AimArrow'
 import { BallMarker } from './BallMarker'
 
 import { gridCorners, gridToLonLat } from '../lib/geo'
@@ -218,6 +219,7 @@ export function HoleMap({ bundle, tee }: HoleMapProps) {
   return (
     <div ref={container} className="h-full w-full">
       {map && <BallMarker map={map} />}
+      {map && <AimArrow map={map} />}
     </div>
   )
 }
