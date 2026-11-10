@@ -213,6 +213,11 @@ def locate(hole: Hole, x: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.nda
     return idx, lie, outside
 
 
+def pin_bearing_deg(hole: Hole, x: np.ndarray, y: np.ndarray) -> np.ndarray:
+    """Bearing from (x, y) to the pin, degrees clockwise from +y, in (-180, 180]."""
+    return np.degrees(np.arctan2(hole.pin_xy[0] - x, hole.pin_xy[1] - y))
+
+
 def step_batch(
     hole: Hole,
     player: Player,
@@ -225,9 +230,11 @@ def step_batch(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Next cell index and reward, each (N, K), for every from cell and draw.
 
-    Land at the sampled offset, roll along the aim unit vector by an amount
-    scaled by the landing lie, then apply the terrain rule for ``mode`` on
-    the final cell.
+    Directions are relative to each cell's bearing to the pin: the table
+    offsets (sampled for an aim of ``dir_deg`` from +y) are rotated by the
+    cell's pin bearing. Land at the sampled offset, roll along the aim unit
+    vector by an amount scaled by the landing lie, then apply the terrain
+    rule for ``mode`` on the final cell.
     """
     if mode not in PENALTY_MODES:
         raise ValueError(f"unknown penalty_mode {mode!r}")
@@ -240,9 +247,13 @@ def step_batch(
     dy = tables.dy[club_idx, from_li, dir_idx]
     roll = tables.roll[club_idx, from_li, dir_idx]
 
-    lx, ly = x0[:, None] + dx, y0[:, None] + dy
+    bearing = np.radians(pin_bearing_deg(hole, x0, y0))[:, None]  # (N, 1)
+    cb, sb = np.cos(bearing), np.sin(bearing)
+    rdx = dx * cb + dy * sb
+    rdy = -dx * sb + dy * cb
+    lx, ly = x0[:, None] + rdx, y0[:, None] + rdy
     _, land_lie, _ = locate(hole, lx, ly)
-    ux, uy = aim_unit(DIRECTIONS_DEG[dir_idx])
+    ux, uy = aim_unit(np.degrees(bearing) + DIRECTIONS_DEG[dir_idx])
     run = apply_roll(land_lie, roll, player)
     fx, fy = lx + ux * run, ly + uy * run
     final_idx, final_lie, outside = locate(hole, fx, fy)

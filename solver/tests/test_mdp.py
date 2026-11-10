@@ -158,7 +158,8 @@ def test_step_batch_no_hazards(tables):
     frac = np.mean((rows >= 4) & (rows <= 6))
     assert frac >= 0.95, frac
     cols = nxt % h.cols
-    assert abs(cols[0].mean() - 5) < 0.5 and abs(cols[1].mean() - 4) < 0.5
+    assert abs(cols[0].mean() - 5) < 0.5
+    assert 4.0 < cols[1].mean() < 5.0  # direction 0 points at the pin, so column 4 drifts right
 
 
 def test_step_batch_same_result_every_mode_without_hazards(tables):
@@ -192,8 +193,9 @@ def _hazard_runs(from_rc, dir_idx, tables):
 
 
 def test_water_rules(tables):
-    # from (2, 1) straight up +y: carry 25 m lands around y = 39.5, row 7, cols 0 to 3 is water
-    h, origin, out, hazard = _hazard_runs((2, 1), DIR0, tables)
+    # from (2, 1) the pin bearing is about +30 deg; aiming -30 relative flies straight up +y
+    # and carry 25 m lands around y = 39.5, row 7, where cols 0 to 3 are water
+    h, origin, out, hazard = _hazard_runs((2, 1), DIR0 - 15, tables)
     assert 0.5 < hazard.mean() < 1.0, hazard.mean()
     flat = h.lie.reshape(-1)
     nxt, rew = out["mulligan"]
@@ -213,8 +215,9 @@ def test_water_rules(tables):
 
 
 def test_ob_rules(tables):
-    # from (2, 8) aiming 10 degrees right: most draws end in col 9 (OB) or off the grid
-    h, origin, out, hazard = _hazard_runs((2, 8), DIR0 + 5, tables)
+    # from (2, 8) the pin bearing is about -23 deg; +34 relative aims about 11 deg right of +y,
+    # so most draws end in col 9 (OB) or off the grid
+    h, origin, out, hazard = _hazard_runs((2, 8), DIR0 + 17, tables)
     assert hazard.mean() > 0.5, hazard.mean()
     flat = h.lie.reshape(-1)
     nxt, rew = out["mulligan"]
@@ -353,3 +356,34 @@ def test_ob_drop_lookup_matches_nearest_playable():
     for i in np.flatnonzero(flat == Lie.WATER):
         assert playable[look[i]] and abs(look[i] // 10 - i // 10) + abs(look[i] % 10 - i % 10) <= 2
     assert ob_drop_lookup(h) is look  # cached per hole
+
+
+# slice 4 fix: directions relative to the cell's bearing to the pin
+
+
+def test_pin_bearing():
+    from caddie.mdp import pin_bearing_deg
+
+    h = toy_hole()
+    x = np.array([27.5, 7.5, 47.5, 27.5])
+    y = np.array([2.5, 47.5, 47.5, 60.0])
+    b = pin_bearing_deg(h, x, y)
+    assert b[0] == pytest.approx(0.0)
+    assert b[1] == pytest.approx(90.0) and b[2] == pytest.approx(-90.0)
+    assert abs(b[3]) == pytest.approx(180.0)
+
+
+def test_direction_zero_points_at_the_pin_from_anywhere(tables):
+    h = toy_hole(hazards=False)
+    player = toy_player()
+    # cells left and right of the pin column on row 4; also a cell beyond the green, row 9 col 1
+    from_idx = np.array([4 * 10 + 1, 4 * 10 + 8, 9 * 10 + 1])
+    nxt, _ = step_batch(h, player, from_idx, h.lie.reshape(-1)[from_idx], 0, DIR0, tables, "replay")
+    r, c = np.divmod(nxt, h.cols)
+    x, y = (c + 0.5) * h.cell_m, (r + 0.5) * h.cell_m
+    for k, (fx, fy) in enumerate(((7.5, 22.5), (42.5, 22.5), (7.5, 47.5))):
+        moved = np.hypot(x[k] - fx, y[k] - fy)
+        before = np.hypot(fx - h.pin_xy[0], fy - h.pin_xy[1])
+        after = np.hypot(x[k] - h.pin_xy[0], y[k] - h.pin_xy[1])
+        assert moved.mean() > 15
+        assert (after < before).mean() > 0.9
