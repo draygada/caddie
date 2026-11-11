@@ -35,7 +35,7 @@ A case is one JSON object in `solver/tests/fixtures/benchmark_cases.json`:
 {
   "id": "water-carry-weak",
   "hole": {"builder": "water_carry", "args": {"water_from_m": 180, "water_to_m": 200}},
-  "player": {"builder": "three_club", "args": {"driver_mu_c": 190}},
+  "player": {"builder": "round_numbers", "args": {"driver_mu_c": 190}},
   "start": {"x": 30.0, "y": 2.5, "lie": "tee"},
   "mode": "drop",
   "n": 2000,
@@ -50,7 +50,7 @@ A case is one JSON object in `solver/tests/fixtures/benchmark_cases.json`:
 }
 ```
 
-`hole.builder` is `toy` or a function in `benchmark_holes.py`; `hole.number` with `mode` loads a real solved bundle from `out/<hole>/<mode>` instead. `player.builder` is `toy`, `three_club` (a synthetic 3-club player with the numbers below) or `file` (`player.json`). `start` defaults to the Black tee. Expectation kinds, all evaluated on paired draws at the case's `n`:
+`hole.builder` is `toy` or a function in `benchmark_holes.py`; `hole.number` with `mode` loads a real solved bundle from `out/<hole>/<mode>` instead. `player.builder` is `toy`, `round_numbers` (a synthetic 5-club player with the numbers below) or `file` (`player.json`). `start` defaults to the Black tee. Expectation kinds, all evaluated on paired draws at the case's `n`:
 
 - `order`: `mean[lower] <= mean[upper] + se`, optionally `- by_at_least`; `se` is the standard error of the paired difference.
 - `close`: `|mean[a] - mean[b]| <= within + se`.
@@ -67,7 +67,7 @@ Synthetic holes (`benchmark_holes.py`, all cell 5 m, pin at the green centroid, 
 | `ob_side` | 12 x 70, OB on columns 0 and 1, fairway columns 2 to 7, rough columns 8 to 11, green as above | the optimal aim is offset away from the OB side |
 | `bunker_front` | `open_straight` plus bunkers in the three cells directly short of the green | short-side avoidance: the grid plays to the centre or long |
 
-The `three_club` player: driver `mu_c` 200 (overridable), `sigma_theta_deg` 6, `sigma_d` 0.07, `p` 0.10, `mu_r` 15, `sigma_r` 8; `7i` 140, 4, 0.05, 0.05, 5, 3; `pw` 100, 3.5, 0.05, 0.05, 2, 1. Lie multipliers and the putting table from the root data contract. These are round numbers chosen for the synthetic cases; they are not the fitted player.
+The `round_numbers` player (five clubs, mirroring the real bag's partial wedges): driver `mu_c` 200 (overridable), `sigma_theta_deg` 6, `sigma_d` 0.07, `p` 0.10, `mu_r` 15, `sigma_r` 8; `7i` 140, 4, 0.05, 0.05, 5, 3; `pw` 100, 3.5, 0.05, 0.05, 2, 1; `sw50` 50, 3.5, 0.06, 0.05, 1, 1; `sw30` 30, 3.5, 0.06, 0.05, 0.5, 0.5. Lie multipliers and the putting table from the root data contract. These are round numbers chosen for the synthetic cases; they are not the fitted player. The two partial wedges are there because a bag whose shortest club carries 100 m cannot finish a 60 m wide hole under the pin baseline (every shot from near the green flies off the grid and drops back), and that same loop makes the exponential-utility value diverge; the real player has `sw70`, `sw50` and `sw30`, so the synthetic one keeps the short end too.
 
 Cases in v1, with the expectations each carries (the JSON is the source of truth; this list is the intent):
 
@@ -75,11 +75,11 @@ Cases in v1, with the expectations each carries (the JSON is the source of truth
 | --- | --- | --- |
 | `toy-drop` | toy, toy player, tee, drop | `band` grid within 0.1 of `-U[tee]`; `order` grid <= pin, grid <= centre; `close` rollout to grid 0.05 |
 | `toy-replay` | toy, toy player, tee, replay | `band` grid <= brute-force Monte Carlo value + 0.05; `order` grid <= pin |
-| `open-straight` | `open_straight`, `three_club`, tee, drop | `close` every approach to grid within 0.3; `action` every approach hits the driver from the tee |
+| `open-straight` | `open_straight`, `round_numbers`, tee, drop | `close` every approach to grid within 0.3; `action` every approach hits the driver from the tee |
 | `water-carry-weak` | `water_carry` 180 to 200, driver 190, tee, drop | as in the JSON above |
 | `water-carry-strong` | same hole, driver 230, tee, drop | `action` grid hits the driver; `close` grid to pin 0.1; `blowup_order` risk <= grid |
-| `ob-left` | `ob_side`, `three_club`, tee, drop | `action` grid `dir_deg_min` 4 (at least two steps right of the pin); `order` grid <= pin by 0.2; `action` risk `dir_deg_min` equal to grid's chosen offset |
-| `bunker-front` | `bunker_front`, `three_club`, 120 m short of the pin in the fairway, drop | `order` grid <= pin; `close` greedy to grid 0.2 |
+| `ob-left` | `ob_side`, `round_numbers`, tee, drop | `action` grid `dir_deg_min` 4 (at least two steps right of the pin); `order` grid <= pin by 0.2; `action` risk `dir_deg_min` equal to grid's chosen offset |
+| `bunker-front` | `bunker_front`, `round_numbers`, 120 m short of the pin in the fairway, drop | `order` grid <= pin; `close` greedy to grid 0.2 |
 | `hole-11-drop-tee` | hole 11 bundle, `player.json`, Black tee, drop | `order` grid <= pin by 0.3, grid <= centre by 0.2; `close` rollout 0.05; `blowup_order` risk <= grid |
 | `hole-11-drop-150` | hole 11, fairway point 137 m (150 yd) short of the pin, drop | `order` grid <= pin; `close` sparse2 to grid 0.1 |
 | `hole-11-replay-tee` | hole 11, Black tee, replay | `order` grid <= pin; `blowup_order` risk <= grid |
