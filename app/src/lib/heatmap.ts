@@ -1,20 +1,23 @@
 /**
- * Strokes-to-go heatmap: a viridis-like ramp and a one-pixel-per-cell painter.
- * Pure TypeScript; the canvas is passed in.
+ * Strokes-to-go heatmap: the warm six-stop ramp from docs/design.md section 5 and a
+ * one-pixel-per-cell painter. Pure TypeScript; the canvas is passed in.
  */
 import type { HoleBundle } from './types'
 
 export type RGB = [number, number, number]
 export type RGBA = [number, number, number, number]
 
-/** Viridis, bright end first: few strokes bright yellow, many strokes dark purple. */
+/**
+ * Dark blue, teal, yellow, orange, red: few strokes cool and dark, many strokes hot.
+ * Must match --h0 to --h5 in index.css, which the legend reads.
+ */
 export const STOPS: readonly RGB[] = [
-  [253, 231, 37],
-  [122, 209, 81],
-  [34, 168, 132],
-  [42, 120, 142],
-  [65, 68, 135],
-  [68, 1, 84],
+  [29, 43, 83],
+  [46, 111, 158],
+  [95, 184, 155],
+  [232, 212, 90],
+  [240, 138, 36],
+  [179, 38, 30],
 ]
 
 /** Colour for a strokes-to-go value on the domain [par - 1, par + 3], clamped; NaN is transparent. */
@@ -76,4 +79,10 @@ export function heatmapDataUrl(b: HoleBundle): string {
   const canvas = document.createElement('canvas')
   paintHeatmap(b, canvas, colourScale(b.meta.par))
   return canvas.toDataURL('image/png')
+}
+
+/** CSS linear-gradient of the ramp for the legend bar. */
+export function rampGradientCss(): string {
+  const stops = STOPS.map((s, k) => `rgb(${s[0]} ${s[1]} ${s[2]}) ${(100 * k) / (STOPS.length - 1)}%`)
+  return `linear-gradient(90deg, ${stops.join(', ')})`
 }

@@ -6,10 +6,10 @@ import { Map as MLMap, type MapMouseEvent, Marker } from 'maplibre-gl'
 import { useEffect, useRef } from 'react'
 
 import { gridToLonLat, lonLatToGrid } from '../lib/geo'
+import { token } from '../lib/tokens'
 import type { Meta, XY } from '../lib/types'
 import { useStore } from '../store'
 
-export const BALL_COLOUR = '#f8fafc'
 /** After a manual drag, GPS updates are ignored for this long. */
 export const GPS_HOLD_MS = 10_000
 
@@ -52,7 +52,8 @@ export function BallMarker({ map }: { map: MLMap }) {
     }
     const { lon, lat } = gridToLonLat(bundle.meta, ball)
     if (!markerRef.current) {
-      const marker = new Marker({ color: BALL_COLOUR, draggable: true }).setLngLat([lon, lat]).addTo(map)
+      const marker = new Marker({ color: token('--ball'), draggable: true }).setLngLat([lon, lat]).addTo(map)
+      marker.getElement().setAttribute('aria-label', 'Ball, drag to move')
       // `drag` fires continuously; only the end of a drag writes the store.
       marker.on('dragend', () => {
         const meta = bundleRef.current?.meta

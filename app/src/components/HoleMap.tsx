@@ -3,6 +3,7 @@
  * Until the store exists (part 11) the bundle comes in as a prop from App.
  */
 import {
+  AttributionControl,
   type ImageSource,
   type ExpressionSpecification,
   type GeoJSONSource,
@@ -24,6 +25,7 @@ import { PlayItOutLayer } from './PlayItOut'
 import { gridCorners, gridToLonLat } from '../lib/geo'
 import { heatmapDataUrl } from '../lib/heatmap'
 import { whenStyleReady } from '../lib/mapReady'
+import { token } from '../lib/tokens'
 import type { HoleBundle, Meta, XY } from '../lib/types'
 
 export const ESRI_TILES =
@@ -41,17 +43,13 @@ export function fitToGrid(map: MLMap, meta: Meta): void {
   map.fitBounds(bounds, { padding: FIT_PADDING_PX, bearing: meta.rotation_deg, duration: 0 })
 }
 
-/** Fill colour per polygon kind, drawn at low opacity over the imagery. */
-export const LIE_COLOURS: Record<string, string> = {
-  fairway: '#7ccd5a',
-  rough: '#4f7d3a',
-  green: '#b8f28b',
-  bunker: '#f1d58b',
-  water: '#3b82f6',
-  ob: '#ef4444',
-  tee: '#e2e8f0',
+/** Polygon kinds in draw order; colours come from the --t-* tokens (docs/design.md). */
+const POLYGON_KINDS = ['fairway', 'rough', 'green', 'bunker', 'water', 'ob', 'tee']
+export function lieColours(): Record<string, string> {
+  return Object.fromEntries(POLYGON_KINDS.map((k) => [k, token(`--t-${k}`)]))
 }
-const POLYGON_KINDS = Object.keys(LIE_COLOURS)
+/** Terrain fills never exceed 35 percent; 25 keeps fairway edges legible over the heatmap. */
+export const TERRAIN_FILL_OPACITY = 0.25
 
 type Feature = GJFeature<Geometry, { kind: string }>
 
@@ -90,12 +88,12 @@ function markerFeatures(meta: Meta, tee: string): FeatureCollection {
 }
 
 function fillColour(): ExpressionSpecification {
+  const colours = lieColours()
   const expr: unknown[] = ['match', ['get', 'kind']]
-  for (const k of POLYGON_KINDS) expr.push(k, LIE_COLOURS[k])
+  for (const k of POLYGON_KINDS) expr.push(k, colours[k])
   expr.push('#ffffff')
   return expr as ExpressionSpecification
 }
-const FILL_COLOUR = fillColour()
 
 // Vite pre-bundles maplibre-gl, which breaks the worker URL it derives from its own
 // module; point it at the worker file Vite serves instead.
@@ -135,9 +133,11 @@ export function HoleMap({ bundle, tee }: HoleMapProps) {
       center: [0, 0],
       zoom: 15,
       maxZoom: MAX_ZOOM,
-      attributionControl: { compact: false },
+      attributionControl: false,
     })
-    map.addControl(new NavigationControl({ showCompass: true }), 'top-right')
+    map.addControl(new NavigationControl({ showCompass: false }), 'top-right')
+    // top-left so the bottom sheet never covers it on a phone
+    map.addControl(new AttributionControl({ compact: false }), 'top-left')
     mapRef.current = map
     setMap(map)
     return () => {
@@ -171,18 +171,19 @@ export function HoleMap({ bundle, tee }: HoleMapProps) {
       if (polySource) {
         polySource.setData(polys)
       } else {
+        const fill = fillColour()
         map.addSource('polys', { type: 'geojson', data: polys })
         map.addLayer({
           id: 'polys-fill',
           type: 'fill',
           source: 'polys',
-          paint: { 'fill-color': FILL_COLOUR, 'fill-opacity': 0.18 },
+          paint: { 'fill-color': fill, 'fill-opacity': TERRAIN_FILL_OPACITY },
         })
         map.addLayer({
           id: 'polys-line',
           type: 'line',
           source: 'polys',
-          paint: { 'line-color': FILL_COLOUR, 'line-width': 1, 'line-opacity': 0.9 },
+          paint: { 'line-color': fill, 'line-width': 1, 'line-opacity': 0.9 },
         })
       }
       if (!map.getSource('marks')) {
@@ -192,9 +193,9 @@ export function HoleMap({ bundle, tee }: HoleMapProps) {
           type: 'circle',
           source: 'marks',
           paint: {
-            'circle-radius': 6,
-            'circle-color': ['match', ['get', 'kind'], 'pin', '#facc15', '#ffffff'],
-            'circle-stroke-color': '#0f172a',
+            'circle-radius': ['match', ['get', 'kind'], 'pin', 7, 5],
+            'circle-color': ['match', ['get', 'kind'], 'pin', token('--pin'), token('--t-tee')],
+            'circle-stroke-color': ['match', ['get', 'kind'], 'pin', token('--color-surface-2'), token('--color-ink')],
             'circle-stroke-width': 2,
           },
         })
