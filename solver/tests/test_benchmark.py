@@ -95,3 +95,74 @@ def test_load_cases_rejects_an_unknown_builder(tmp_path: Path):
     )
     with pytest.raises(ValueError, match="nope"):
         load_cases(bad, tmp_path, solve_missing=False)
+
+
+# --- slice 4: run_case on the cell simulator ---------------------------------------------------
+
+METRIC_KEYS = {
+    "mean_strokes",
+    "std_strokes",
+    "se_vs_grid",
+    "p_blowup",
+    "regret",
+    "disagreement",
+    "build_s",
+    "decide_s",
+    "decide_ms_per_shot",
+    "passed",
+    "failed",
+}
+
+
+@pytest.fixture(scope="module")
+def toy_case(tmp_path_factory):
+    from caddie.benchmark import load_cases
+
+    out = tmp_path_factory.mktemp("out")
+    (case,) = load_cases(CASES_PATH, out, ids=["toy-drop"])
+    return case
+
+
+def test_simulate_from_a_fairway_point_takes_fewer_strokes_than_from_the_tee(toy_case):
+    from caddie.evaluate import optimal_policy, simulate
+
+    hole, player, sol = toy_case.hole, toy_case.player, toy_case.solution
+    pol = optimal_policy(sol, hole)
+    tee = simulate(hole, player, pol, "drop", n=500, seed=0)
+    near = simulate(hole, player, pol, "drop", n=500, seed=0, start=(7.5, 32.5, Lie.FAIRWAY))
+    assert near.mean() < tee.mean() - 0.5
+    same = simulate(hole, player, pol, "drop", n=500, seed=0, start=(*hole.tee_xy, Lie.TEE))
+    np.testing.assert_array_equal(same, tee)
+
+
+def test_run_case_metrics_and_expectations_on_the_toy(toy_case):
+    from caddie.benchmark import run_case
+
+    result = run_case(toy_case, ["grid", "rollout", "pin", "centre", "greedy"], seed=0)
+    assert result["case"] == "toy-drop" and result["simulator"] == "cell"
+    for name, m in result["approaches"].items():
+        assert METRIC_KEYS <= set(m), name
+    grid = result["approaches"]["grid"]
+    assert grid["regret"] <= grid["se_vs_grid"] + 1e-9 and grid["se_vs_grid"] == 0.0
+    assert grid["disagreement"] == 0.0
+    assert result["approaches"]["pin"]["disagreement"] > 0.0
+    assert result["approaches"]["greedy"]["decide_s"] > 0.0
+    passed = {e for m in result["approaches"].values() for e in m["passed"]}
+    assert {"grid-matches-tee-value", "grid-beats-pin", "grid-beats-centre"} <= passed
+    assert "rollout-close-to-grid" in passed
+    assert result["not_run"] == ["risk", "sparse2", "mcts"] or result["not_run"] == []
+
+
+def test_check_expectations_reports_a_failing_one_with_its_measured_value(toy_case):
+    from dataclasses import replace
+
+    from caddie.benchmark import check_expectations, run_case
+
+    extra = {"id": "impossible", "kind": "order", "lower": "pin", "upper": "grid", "by_at_least": 5}
+    case = replace(toy_case, expect=toy_case.expect + [extra])
+    result = run_case(case, ["grid", "pin"], seed=0, check=False)
+    passed, failed, skipped = check_expectations(case, result)
+    assert "grid-beats-pin" in passed
+    (bad,) = [f for f in failed if f["id"] == "impossible"]
+    assert bad["measured"]["pin"] > bad["measured"]["grid"]
+    assert {s["id"] for s in skipped} == {"grid-beats-centre", "rollout-close-to-grid"}
