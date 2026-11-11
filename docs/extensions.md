@@ -35,3 +35,5 @@ Ranked by payoff per hour for this project. Each names the chapter, where it plu
 ## What I would actually add, in order
 
 1, 2, 3 during M1d (they cost half a day together and improve the report's robustness section). Then 4 (exponential utility) before the video, because the risk-averse vs risk-neutral policy contrast on hole 11 is the single most convincing 20 seconds of footage you can film. Items 7 or 8 only if the online step ends up in the video and you want a compute-vs-quality figure.
+
+Items 4, 7, 8 and a one-step greedy rule are compared head to head in `docs/parts/16-benchmark.md`, which fixes their settings and the cases they run on. Items 9 and the goal objective are listed there as follow-ups.
