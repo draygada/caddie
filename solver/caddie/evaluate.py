@@ -161,3 +161,90 @@ def simulate(
             "%d of %d plays did not hole out in %d shots", int(active.sum()), n, MAX_SIM_SHOTS
         )
     return strokes
+
+
+# --- slice 3: evaluate_hole ----------------------------------------------------------------------
+
+BLOWUP_OVER_PAR = 3
+STROKES_SAVED_LABEL = (
+    "extrapolation: 18 x (baseline mean - optimal mean) on this hole, as if every hole "
+    "of a round were this one"
+)
+
+
+def disagreement(hole: Hole, solution: Solution, policy: Policy) -> float:
+    """Fraction of non-terminal playable cells where ``policy`` differs from the solution."""
+    flat = hole.lie.reshape(-1)
+    cells = np.flatnonzero(
+        np.isin(flat, [int(Lie.TEE), int(Lie.FAIRWAY), int(Lie.ROUGH), int(Lie.BUNKER)])
+        & (solution.club != NO_ACTION)
+    )
+    if cells.size == 0:
+        return float("nan")
+    differ = 0
+    for cell in cells:
+        r, c = divmod(int(cell), hole.cols)
+        x, y = (c + 0.5) * hole.cell_m, (r + 0.5) * hole.cell_m
+        club, direction = policy(x, y, Lie(int(flat[cell])))
+        differ += club != int(solution.club[cell]) or direction != int(solution.dir[cell])
+    return differ / cells.size
+
+
+def _metrics(strokes: np.ndarray, par: int) -> dict:
+    rounded = np.rint(strokes).astype(int)
+    values, counts = np.unique(rounded, return_counts=True)
+    return {
+        "mean_strokes": float(strokes.mean()),
+        "std_strokes": float(strokes.std(ddof=1)) if strokes.size > 1 else 0.0,
+        "histogram": {int(v): int(k) for v, k in zip(values, counts, strict=True)},
+        "p_blowup": float(np.mean(strokes >= par + BLOWUP_OVER_PAR)),
+    }
+
+
+def evaluate_hole(
+    hole: Hole,
+    player: Player,
+    solution: Solution,
+    mode: PenaltyMode,
+    n: int = 2000,
+    seed: int = 0,
+) -> dict:
+    """Metrics for the optimal, pin and centre policies on one hole and mode.
+
+    The histogram bins scores rounded to the nearest whole stroke (the simulation adds
+    expected putts, which are fractional). ``strokes_saved_per_round`` is labelled as an
+    extrapolation in ``strokes_saved_label``.
+    """
+    policies = {
+        "optimal": optimal_policy(solution, hole),
+        "pin": pin_policy(hole, player),
+        "centre": centre_policy(hole, player),
+    }
+    out: dict[str, dict] = {}
+    for name, policy in policies.items():
+        strokes = simulate(hole, player, policy, mode, n=n, seed=seed)
+        m = _metrics(strokes, hole.par)
+        m["disagreement"] = 0.0 if name == "optimal" else disagreement(hole, solution, policy)
+        out[name] = m
+        log.info(
+            "hole %s %s %s: mean %.3f sd %.3f blowup %.3f disagreement %.3f",
+            hole.number,
+            mode,
+            name,
+            m["mean_strokes"],
+            m["std_strokes"],
+            m["p_blowup"],
+            m["disagreement"],
+        )
+    optimal_mean = out["optimal"]["mean_strokes"]
+    for m in out.values():
+        m["strokes_saved_per_round"] = 18.0 * (m["mean_strokes"] - optimal_mean)
+    return {
+        "hole": hole.number,
+        "mode": mode,
+        "par": hole.par,
+        "n": n,
+        "seed": seed,
+        "policies": out,
+        "strokes_saved_label": STROKES_SAVED_LABEL,
+    }

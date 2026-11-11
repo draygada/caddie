@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from caddie.evaluate import centre_policy, optimal_policy, pin_policy, simulate
+from caddie.evaluate import centre_policy, evaluate_hole, optimal_policy, pin_policy, simulate
 from caddie.mdp import DIRECTIONS_DEG, Lie
 from caddie.value_iteration import solve
 from tests.fixtures.toy_hole import TOY_CLUB, toy_hole, toy_player
@@ -86,3 +86,39 @@ def test_simulate_pin_policy_is_no_better_than_optimal(toy_drop):
     assert pin.mean() >= opt.mean() - 0.05
     # the toy brute force for "aim at the pin" under replay is about 8.3 strokes (part 04)
     assert 6.0 < pin.mean() < 10.0
+
+
+# --- slice 3: evaluate_hole ----------------------------------------------------------------------
+
+METRIC_KEYS = {
+    "mean_strokes",
+    "std_strokes",
+    "histogram",
+    "p_blowup",
+    "disagreement",
+    "strokes_saved_per_round",
+}
+
+
+def test_evaluate_hole_metrics(toy_drop):
+    solution, hole, player = toy_drop
+    results = evaluate_hole(hole, player, solution, "drop", n=2000, seed=0)
+    assert set(results) >= {"hole", "mode", "par", "n", "policies"}
+    assert set(results["policies"]) == {"optimal", "pin", "centre"}
+    for name, m in results["policies"].items():
+        assert set(m) == METRIC_KEYS, name
+        assert sum(m["histogram"].values()) == 2000
+        assert all(isinstance(k, int) for k in m["histogram"])
+        assert 0.0 <= m["p_blowup"] <= 1.0
+        assert 0.0 <= m["disagreement"] <= 1.0
+    opt, pin = results["policies"]["optimal"], results["policies"]["pin"]
+    assert opt["mean_strokes"] <= pin["mean_strokes"] <= pin["mean_strokes"] + 2.0
+    assert opt["mean_strokes"] <= pin["mean_strokes"] + 1e-9
+    assert pin["mean_strokes"] <= opt["mean_strokes"] + 2.0
+    assert opt["disagreement"] == 0.0
+    assert pin["disagreement"] > 0.0
+    assert opt["strokes_saved_per_round"] == 0.0
+    assert pin["strokes_saved_per_round"] == pytest.approx(
+        18.0 * (pin["mean_strokes"] - opt["mean_strokes"])
+    )
+    assert results["strokes_saved_label"].startswith("extrapolation")
