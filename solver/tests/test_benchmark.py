@@ -24,14 +24,17 @@ from tests.fixtures.benchmark_holes import (
 # --- slice 1: cases and synthetic holes ----------------------------------------------------------
 
 
-def test_open_straight_is_fairway_with_a_round_green_at_the_far_end():
+def test_open_straight_is_a_fairway_with_rough_shoulders_and_a_round_green():
     hole = open_straight()
     assert hole.lie.shape == (ROWS, COLS) and hole.par == 4
     green = hole.lie == int(Lie.GREEN)
-    assert green.sum() == 16  # the 4 x 4 block of centres within 12.5 m of (30, 330)
-    assert np.all(hole.lie[~green] == int(Lie.FAIRWAY))
-    assert abs(hole.pin_xy[0] - 30.0) < 1e-9 and abs(hole.pin_xy[1] - 330.0) < 1e-9
-    assert hole.tee_xy == (30.0, 2.5)
+    assert green.sum() == 16  # the 4 x 4 block of centres within 12.5 m of (60, 330)
+    rest = hole.lie[~green]
+    assert set(np.unique(rest).tolist()) == {int(Lie.FAIRWAY), int(Lie.ROUGH)}
+    assert np.all(hole.lie[:60, 6:18] == int(Lie.FAIRWAY))
+    assert np.all(hole.lie[:, :6] == int(Lie.ROUGH)) and np.all(hole.lie[:, 18:] == int(Lie.ROUGH))
+    assert abs(hole.pin_xy[0] - 60.0) < 1e-9 and abs(hole.pin_xy[1] - 330.0) < 1e-9
+    assert hole.tee_xy == (60.0, 2.5)
 
 
 def test_water_carry_band_rows_are_water_across_the_full_width():
@@ -45,10 +48,10 @@ def test_water_carry_band_rows_are_water_across_the_full_width():
 
 def test_ob_side_columns():
     hole = ob_side()
-    assert np.all(hole.lie[:, 0:2] == int(Lie.OB))
+    assert np.all(hole.lie[:, 0:6] == int(Lie.OB))
     below_green = hole.lie[:60]
-    assert np.all(below_green[:, 2:8] == int(Lie.FAIRWAY))
-    assert np.all(below_green[:, 8:] == int(Lie.ROUGH))
+    assert np.all(below_green[:, 6:18] == int(Lie.FAIRWAY))
+    assert np.all(below_green[:, 18:] == int(Lie.ROUGH))
 
 
 def test_bunker_front_cells_sit_directly_short_of_the_green():
@@ -82,7 +85,7 @@ def test_load_cases_builds_every_synthetic_case(tmp_path: Path):
         assert len(c.start) == 3 and isinstance(c.start[2], Lie)
     weak = next(c for c in cases if c.id == "water-carry-weak")
     assert weak.player.clubs["driver"].mu_c == 190.0
-    assert weak.start == (30.0, 2.5, Lie.TEE)
+    assert weak.start == (60.0, 2.5, Lie.TEE)
     front = next(c for c in cases if c.id == "bunker-front")
     assert front.start[1] == pytest.approx(front.hole.pin_xy[1] - 120.0)
     assert front.start[2] == Lie.FAIRWAY

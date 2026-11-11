@@ -1,8 +1,10 @@
 """Synthetic holes and the round-number player for part 16 (docs/parts/16-benchmark.md).
 
-Every hole is 12 x 70 cells of 5 m (60 x 350 m), tee at (30, 2.5), a round green of
-radius 12.5 m centred at y = 330 whose centroid is the pin, par 4. The builders differ
-only in the hazards they add. Numbers here are benchmark settings, not the fitted player.
+Every hole is 70 rows x 24 cols of 5 m (350 x 120 m): a 60 m fairway down the middle
+(columns 6 to 17) with 30 m rough shoulders either side, tee at (60, 2.5), a round green
+of radius 12.5 m centred at y = 330 whose centroid is the pin, par 4. Off the grid is OB,
+as on the real holes, so the shoulders keep a 6 degree driver on the hole. The builders
+differ only in the hazards they add. Numbers here are benchmark settings, not the fitted player.
 """
 
 from __future__ import annotations
@@ -14,9 +16,10 @@ from caddie.geometry import Hole, compute_drop_index
 from caddie.mdp import Lie
 from caddie.putting import PuttingTable
 
-ROWS, COLS, CELL_M = 70, 12, 5.0
-TEE_XY = (30.0, 2.5)
-GREEN_CENTRE = (30.0, 330.0)
+ROWS, COLS, CELL_M = 70, 24, 5.0
+FAIRWAY_COLS = slice(6, 18)
+TEE_XY = (60.0, 2.5)
+GREEN_CENTRE = (60.0, 330.0)
 GREEN_RADIUS_M = 12.5
 PAR = 4
 
@@ -59,35 +62,40 @@ def _finish(lie: np.ndarray, number: int) -> Hole:
     )
 
 
+def _base() -> np.ndarray:
+    lie = np.full((ROWS, COLS), int(Lie.ROUGH), dtype=np.uint8)
+    lie[:, FAIRWAY_COLS] = int(Lie.FAIRWAY)
+    return lie
+
+
 def open_straight() -> Hole:
-    """Fairway everywhere: the no-hazard control."""
-    lie = np.full((ROWS, COLS), int(Lie.FAIRWAY), dtype=np.uint8)
-    return _finish(lie, number=901)
+    """Fairway down the middle, rough shoulders, no hazard: the control."""
+    return _finish(_base(), number=901)
 
 
 def water_carry(water_from_m: float = 180.0, water_to_m: float = 200.0) -> Hole:
     """``open_straight`` plus a water band across the full width between the two y values."""
-    lie = np.full((ROWS, COLS), int(Lie.FAIRWAY), dtype=np.uint8)
+    lie = _base()
     _, yy = _cell_centres()
     lie[(yy >= water_from_m) & (yy <= water_to_m)] = int(Lie.WATER)
     return _finish(lie, number=902)
 
 
 def ob_side() -> Hole:
-    """OB on columns 0 and 1, fairway on columns 2 to 7, rough on columns 8 to 11."""
-    lie = np.full((ROWS, COLS), int(Lie.FAIRWAY), dtype=np.uint8)
-    lie[:, 0:2] = int(Lie.OB)
-    lie[:, 8:] = int(Lie.ROUGH)
+    """The left shoulder is OB instead of rough: OB on columns 0 to 5, 30 m left of the tee
+    line, fairway 6 to 17, rough 18 to 23."""
+    lie = _base()
+    lie[:, 0:6] = int(Lie.OB)
     return _finish(lie, number=903)
 
 
 BUNKER_FRONT_ROW = 63
-BUNKER_FRONT_COLS = (5, 6, 7)
+BUNKER_FRONT_COLS = (11, 12, 13)
 
 
 def bunker_front() -> Hole:
     """``open_straight`` plus bunkers in the three cells directly short of the green."""
-    lie = np.full((ROWS, COLS), int(Lie.FAIRWAY), dtype=np.uint8)
+    lie = _base()
     for c in BUNKER_FRONT_COLS:
         lie[BUNKER_FRONT_ROW, c] = int(Lie.BUNKER)
     return _finish(lie, number=904)

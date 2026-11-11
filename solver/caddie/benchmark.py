@@ -345,6 +345,31 @@ def _action_points(case: Case) -> dict[str, tuple[float, float, Lie]]:
     return points
 
 
+DISAGREEMENT_CELLS = 100
+
+
+def sampled_disagreement(hole: Hole, solution: Solution, policy, seed: int = 0) -> float:
+    """Share of a seeded sample of at most ``DISAGREEMENT_CELLS`` playable cells where the
+    policy's (club, direction) differs from the solution's. A sample, because the online
+    approaches take up to a second per cell and the full set is several hundred cells."""
+    from caddie.approaches import playable_cells
+
+    cells = playable_cells(hole, solution)
+    if cells.size == 0:
+        return float("nan")
+    if cells.size > DISAGREEMENT_CELLS:
+        cells = np.random.default_rng(seed).choice(cells, size=DISAGREEMENT_CELLS, replace=False)
+    flat = hole.lie.reshape(-1)
+    differ = 0
+    for cell in cells:
+        r, c = divmod(int(cell), hole.cols)
+        club, direction = policy(
+            (c + 0.5) * hole.cell_m, (r + 0.5) * hole.cell_m, Lie(int(flat[cell]))
+        )
+        differ += club != int(solution.club[cell]) or direction != int(solution.dir[cell])
+    return differ / cells.size
+
+
 def run_case(
     case: Case,
     approaches: list[str],
@@ -360,7 +385,7 @@ def run_case(
     the approaches those are NaN.
     """
     from caddie.approaches import APPROACHES
-    from caddie.evaluate import disagreement, simulate
+    from caddie.evaluate import simulate
 
     if simulator not in ("cell", "point"):
         raise ValueError(f"unknown simulator {simulator!r}")
@@ -411,7 +436,7 @@ def run_case(
             "decide_s": clock["s"],
             "decide_ms_per_shot": 1000.0 * clock["s"] / max(clock["n"], 1),
             "disagreement": (
-                disagreement(case.hole, case.solution, policy)
+                sampled_disagreement(case.hole, case.solution, policy, seed=seed)
                 if case.solution is not None and name != "grid"
                 else (0.0 if name == "grid" else float("nan"))
             ),
