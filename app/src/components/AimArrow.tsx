@@ -4,16 +4,20 @@
  */
 import type { GeoJSONSource, Map as MLMap } from 'maplibre-gl'
 import type { FeatureCollection } from 'geojson'
-import { useEffect } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 
 import { gridToLonLat } from '../lib/geo'
 import { lieAt } from '../lib/grid'
 import { whenStyleReady } from '../lib/mapReady'
+import { token } from '../lib/tokens'
 import type { Lie, LieName, Meta, Player, XY } from '../lib/types'
 import { useStore } from '../store'
 
 export const ELLIPSE_POINTS = 32
-export const ARROW_COLOUR = '#f8fafc'
+/** The arrow is one of the three --rec elements (docs/design.md section 3). */
+export function arrowColour(): string {
+  return token('--color-rec')
+}
 
 /** Bearing from `p` to the pin in degrees: 0 along +y, positive to the golfer's right. */
 export function pinBearingDeg(meta: Meta, p: XY): number {
@@ -89,49 +93,56 @@ export function AimArrow({ map }: { map: MLMap }) {
   const lieOverride = useStore((s) => s.lieOverride)
   const recommendation = useStore((s) => s.recommendation)
 
+  // Geometry only changes with these inputs; drag frames that leave them alone cost nothing.
+  const geometry = useMemo<AimGeometry | null>(() => {
+    if (!bundle || !player || !ball || !recommendation) return null
+    if (!(recommendation.club in player.clubs)) {
+      // bundle and player.json disagree (e.g. the toy player with a real hole): no arrow
+      console.warn(`aim arrow: player.json has no club ${recommendation.club}`)
+      return null
+    }
+    const lie = lieOverride ?? lieAt(bundle, ball)
+    return aimGeometry(bundle.meta, player, ball, lie, recommendation)
+  }, [bundle, player, ball, lieOverride, recommendation])
+  const lastRef = useRef<string>('')
+
   useEffect(() => {
     const apply = () => {
-      let geometry: AimGeometry | null = null
-      if (bundle && player && ball && recommendation) {
-        if (recommendation.club in player.clubs) {
-          const lie = lieOverride ?? lieAt(bundle, ball)
-          geometry = aimGeometry(bundle.meta, player, ball, lie, recommendation)
-        } else {
-          // bundle and player.json disagree (e.g. the toy player with a real hole): no arrow
-          console.warn(`aim arrow: player.json has no club ${recommendation.club}`)
-        }
-      }
       const data = toFeatures(bundle?.meta ?? ({} as Meta), bundle ? geometry : null)
+      const key = JSON.stringify(data)
       const source = map.getSource('aim') as GeoJSONSource | undefined
       if (source) {
-        source.setData(data)
+        if (key !== lastRef.current) source.setData(data)
+        lastRef.current = key
         return
       }
+      lastRef.current = key
+      const colour = arrowColour()
       map.addSource('aim', { type: 'geojson', data })
       map.addLayer({
         id: 'aim-ellipse',
         type: 'fill',
         source: 'aim',
         filter: ['==', ['get', 'kind'], 'ellipse'],
-        paint: { 'fill-color': ARROW_COLOUR, 'fill-opacity': 0.25 },
+        paint: { 'fill-color': colour, 'fill-opacity': 0.22 },
       })
       map.addLayer({
         id: 'aim-ellipse-line',
         type: 'line',
         source: 'aim',
         filter: ['==', ['get', 'kind'], 'ellipse'],
-        paint: { 'line-color': ARROW_COLOUR, 'line-width': 1 },
+        paint: { 'line-color': colour, 'line-width': 1.5 },
       })
       map.addLayer({
         id: 'aim-line',
         type: 'line',
         source: 'aim',
         filter: ['==', ['get', 'kind'], 'line'],
-        paint: { 'line-color': ARROW_COLOUR, 'line-width': 2.5 },
+        paint: { 'line-color': colour, 'line-width': 3 },
       })
     }
     return whenStyleReady(map, apply)
-  }, [map, bundle, player, ball, lieOverride, recommendation])
+  }, [map, bundle, geometry])
 
   return null
 }

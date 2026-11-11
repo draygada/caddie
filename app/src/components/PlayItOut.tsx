@@ -21,11 +21,15 @@ import {
   playOut,
   type Shot,
 } from '../lib/simulate'
+import { token } from '../lib/tokens'
 import type { Meta } from '../lib/types'
 import { useStore } from '../store'
 
 export const HISTOGRAM_RUNS = 1000
-export const PATH_COLOUR = '#f472b6'
+/** The path is ink on the photo; the hopping marker is the ball colour. Never --rec. */
+export function pathColour(): string {
+  return token('--color-ink')
+}
 
 // --- shared animation state ---------------------------------------------------------------------
 
@@ -60,12 +64,21 @@ export function resetPlay(): void {
   setPlayState(idle)
 }
 
+/** True when the store can play from here: a playable lie and a player who owns the club. */
+export function canPlayFromStore(): boolean {
+  const { bundle, player, ball, lieOverride, recommendation } = useStore.getState()
+  if (!bundle || !player || !ball || !recommendation) return false
+  if (!(recommendation.club in player.clubs)) return false
+  const lie = lieOverride ?? lieAt(bundle, ball)
+  return lie >= 1 && lie <= 5
+}
+
 /** Simulate one sequence from the store's ball and start the animation. */
 export function startPlay(): void {
+  if (!canPlayFromStore()) return
   const { bundle, player, ball, lieOverride, mode } = useStore.getState()
   if (!bundle || !player || !ball) return
   const lie = lieOverride ?? lieAt(bundle, ball)
-  if (lie < 1 || lie > 5) return
   const seed = (Date.now() % 2147483647) >>> 0
   const result = playOut(bundle, player, ball, lie, mode, mulberry32(seed))
   setPlayState({ shots: result.shots, strokes: result.strokes, startedAt: performance.now(), finishedAt: null, histogram: null })
@@ -117,7 +130,7 @@ export function PlayItOutLayer({ map }: { map: MLMap }) {
         id: 'play-path',
         type: 'line',
         source: 'play-path',
-        paint: { 'line-color': PATH_COLOUR, 'line-width': 2, 'line-dasharray': [2, 2] },
+        paint: { 'line-color': pathColour(), 'line-width': 2, 'line-dasharray': [2, 2] },
       })
     }
     const clear = () => {
@@ -145,8 +158,10 @@ export function PlayItOutLayer({ map }: { map: MLMap }) {
       src?.setData(pathFeatures(meta, shots, frame.index, frame.pos))
       if (frame.pos) {
         const { lon, lat } = gridToLonLat(meta, frame.pos)
-        if (!markerRef.current) markerRef.current = new Marker({ color: PATH_COLOUR, scale: 0.8 }).setLngLat([lon, lat]).addTo(map)
-        else markerRef.current.setLngLat([lon, lat])
+        if (!markerRef.current) {
+          markerRef.current = new Marker({ color: token('--ball'), scale: 0.8 }).setLngLat([lon, lat]).addTo(map)
+          markerRef.current.getElement().setAttribute('aria-hidden', 'true')
+        } else markerRef.current.setLngLat([lon, lat])
       }
       if (frame.done) {
         if (play.finishedAt === null) finishPlay()
@@ -175,9 +190,11 @@ export function PlayItOut() {
   const play = usePlayState()
   const bundle = useStore((s) => s.bundle)
   const ball = useStore((s) => s.ball)
+  const player = useStore((s) => s.player)
   const recommendation = useStore((s) => s.recommendation)
   const running = play.startedAt !== null && play.finishedAt === null
-  const canPlay = Boolean(bundle && ball && recommendation) && !running
+  const canPlay =
+    Boolean(bundle && ball && player && recommendation && recommendation.club in player.clubs) && !running
   const par = bundle?.meta.par ?? 4
   const bins = play.histogram ? histogramBins(play.histogram, par) : null
   const maxCount = bins ? Math.max(1, ...bins.map((b) => b.count)) : 1
@@ -190,20 +207,20 @@ export function PlayItOut() {
   }, [ball, bundle])
 
   return (
-    <div className="mt-2 flex flex-col gap-2 border-t border-slate-700 pt-2" data-testid="play-it-out">
+    <div className="flex flex-col gap-3" data-testid="play-it-out">
       <div className="flex gap-2">
         <button
           type="button"
-          className="rounded bg-pink-500 px-3 py-1 text-sm font-medium text-slate-900 disabled:opacity-40"
+          className="h-12 flex-1 rounded-lg border border-line bg-surface-2 px-4 text-body font-medium text-ink transition-colors hover:bg-line/60 disabled:opacity-40 disabled:hover:bg-surface-2"
           disabled={!canPlay}
           onClick={startPlay}
         >
-          {running ? 'Playing...' : play.strokes === null ? 'Play it out' : 'Play it out again'}
+          {running ? 'Playing' : play.strokes === null ? 'Play it out' : 'Play it out again'}
         </button>
         {play.strokes !== null && (
           <button
             type="button"
-            className="rounded bg-slate-700 px-3 py-1 text-sm text-slate-200 hover:bg-slate-600"
+            className="h-12 rounded-lg px-4 text-body font-medium text-ink-2 transition-colors hover:text-ink"
             onClick={resetPlay}
           >
             Reset
@@ -211,10 +228,13 @@ export function PlayItOut() {
         )}
       </div>
       {play.strokes !== null && play.finishedAt !== null && (
-        <div className="text-sm" data-testid="score">
-          This time: <span className="text-2xl font-bold text-pink-300">{play.strokes}</span>{' '}
-          <span className="text-slate-400">
-            ({play.shots.length} shot{play.shots.length === 1 ? '' : 's'} plus putts, par {par})
+        <div className="flex items-baseline gap-2" data-testid="score">
+          <span className="label">This time</span>
+          <span className="num text-ink" style={{ fontSize: 'var(--text-big)', fontWeight: 600, lineHeight: 1 }}>
+            {play.strokes}
+          </span>
+          <span className="num text-caption text-ink-2">
+            {play.shots.length} shot{play.shots.length === 1 ? '' : 's'} plus putts, par {par}
           </span>
         </div>
       )}
@@ -224,14 +244,14 @@ export function PlayItOut() {
             {bins.map((b) => (
               <div key={b.label} className="flex flex-1 flex-col items-center justify-end gap-1" title={`${b.label}: ${b.count}`}>
                 <div
-                  className={`w-full rounded-t ${b.isPar ? 'bg-emerald-400' : 'bg-slate-500'}`}
-                  style={{ height: `${Math.round((88 * b.count) / maxCount)}px` }}
+                  className={`w-full rounded-t ${b.isPar ? 'bg-ink' : 'bg-line'}`}
+                  style={{ height: `${Math.max(2, Math.round((80 * b.count) / maxCount))}px` }}
                 />
-                <div className="text-[10px] text-slate-400">{b.label}</div>
+                <div className={`num text-caption ${b.isPar ? 'font-semibold text-ink' : 'text-ink-2'}`}>{b.label}</div>
               </div>
             ))}
           </div>
-          <div className="mt-1 text-xs text-slate-400" data-testid="summary">
+          <div className="num mt-1 text-caption text-ink-2" data-testid="summary">
             {HISTOGRAM_RUNS} plays: mean {mean.toFixed(2)} strokes, {Math.round(100 * blowUp)}% at or above par + 3
           </div>
         </div>
