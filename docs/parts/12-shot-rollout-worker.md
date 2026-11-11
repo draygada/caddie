@@ -19,7 +19,7 @@ export function sampleShot(b: HoleBundle, player: Player, from: XY, fromLie: Lie
    // mirrors mdp.step_batch for one draw:
    // theta = sigma_theta * lieMult.sigma * normal; X = rng() < p ? normal - 2 : normal
    // carry = mu_c * lieMult.carry * (1 + sigma_d * lieMult.sigma * X)
-   // land = from + carry * (sin(dir+theta), cos(dir+theta)); landing lie from lieAt
+   // b = atan2(pin.x - from.x, pin.y - from.y) (bearing to the pin); land = from + carry * (sin(b+dir+theta), cos(b+dir+theta)); landing lie from lieAt
    // roll = (mu_r + sigma_r * normal) * lieMult.roll(from) * rollMult(landingLie); final = land + roll * aimUnit
    // terrain rule by mode exactly as part 04; drop uses the nearest fairway/rough cell on the tee side (computed on the fly with a small search since drop_index is not shipped)
 export function expectedPutts(player: Player, d_m: number): number
