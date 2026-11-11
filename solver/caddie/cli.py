@@ -17,6 +17,8 @@ import time
 from collections.abc import Sequence
 from pathlib import Path
 
+import numpy as np
+
 from caddie.dispersion import Player, build_player
 from caddie.export import (
     BUNDLE_FILES,
@@ -27,10 +29,11 @@ from caddie.export import (
     write_bundle,
     write_player,
 )
-from caddie.geometry import Hole, build_hole, write_lie_png
-from caddie.mdp import PENALTY_MODES, PenaltyMode
+from caddie.geometry import Hole, build_hole, compute_drop_index, write_lie_png
+from caddie.mdp import PENALTY_MODES, Lie, PenaltyMode
+from caddie.online import recommend
 from caddie.putting import build_putting_table
-from caddie.value_iteration import solve, write_value_png
+from caddie.value_iteration import Solution, solve, write_value_png
 
 log = logging.getLogger(__name__)
 
@@ -153,6 +156,85 @@ def cmd_export(args: argparse.Namespace) -> int:
     return 0
 
 
+LIE_BY_NAME = {"tee": Lie.TEE, "fairway": Lie.FAIRWAY, "rough": Lie.ROUGH, "bunker": Lie.BUNKER}
+
+
+def hole_from_bundle(meta: dict, lie: np.ndarray) -> Hole:
+    """A ``Hole`` rebuilt from a written bundle, without re-rasterizing the polygons."""
+    number = 0 if meta["hole"] == TOY else int(meta["hole"])
+    tee_xy = (float(meta["tee_xy"][0]), float(meta["tee_xy"][1]))
+    return Hole(
+        number=number,
+        par=int(meta["par"]),
+        cell_m=float(meta["cell_m"]),
+        rows=int(meta["rows"]),
+        cols=int(meta["cols"]),
+        origin_lat=float(meta["origin"]["lat"]),
+        origin_lon=float(meta["origin"]["lon"]),
+        rotation_deg=float(meta["rotation_deg"]),
+        tee_xy=tee_xy,
+        tees={k: (float(v[0]), float(v[1])) for k, v in meta["tees"].items()},
+        pin_xy=(float(meta["pin_xy"][0]), float(meta["pin_xy"][1])),
+        lie=np.ascontiguousarray(lie, dtype=np.uint8),
+        drop_index=compute_drop_index(
+            np.ascontiguousarray(lie, dtype=np.uint8), tee_xy, float(meta["cell_m"])
+        ),
+        polygons_xy={
+            k: [[tuple(pt) for pt in ring] for ring in v] for k, v in meta["polygons"].items()
+        },
+    )
+
+
+def load_solution(args: argparse.Namespace) -> tuple[Solution, Hole] | None:
+    """The solved bundle under ``--out`` for ``args.hole`` and ``args.mode``, or None."""
+    d = bundle_dir(args.out, args.hole, args.mode)
+    if not all((d / f).exists() for f in BUNDLE_FILES):
+        log.error("no bundle at %s: run `solve %s --mode %s` first", d, args.hole, args.mode)
+        return None
+    meta, lie, value, club, direction = read_bundle(d)
+    hole = hole_from_bundle(meta, lie)
+    solution = Solution(
+        hole=hole.number,
+        mode=args.mode,
+        U=value.reshape(-1).astype(np.float32),
+        club=club.reshape(-1),
+        dir=direction.reshape(-1),
+        sweeps=0,
+    )
+    return solution, hole
+
+
+def cmd_recommend(args: argparse.Namespace) -> int:
+    t0 = time.perf_counter()
+    player = load_player(args.hole, args.player)
+    if player is None:
+        return 1
+    loaded = load_solution(args)
+    if loaded is None:
+        return 1
+    solution, hole = loaded
+    lie = LIE_BY_NAME[args.lie] if args.lie else None
+    try:
+        rec = recommend(
+            solution, hole, player, args.x, args.y, lie, args.mode, m=args.m, seed=args.seed
+        )
+    except ValueError as e:
+        log.error("%s", e)
+        return 1
+    side = (
+        "at the pin"
+        if rec.dir_deg == 0
+        else f"{abs(rec.dir_deg):.0f} deg {'left' if rec.dir_deg < 0 else 'right'} of the pin"
+    )
+    print(f"hole {args.hole} {args.mode} from ({args.x:.1f}, {args.y:.1f}) m")
+    print(f"club: {rec.club}")
+    print(f"aim: {side} ({rec.dir_deg:+.0f} deg)")
+    print(f"expected strokes: {rec.expected_strokes:.2f}")
+    print(f"aim at pin with longest reaching club: {rec.baseline_pin_strokes:.2f}")
+    log.info("recommend took %.2f s", time.perf_counter() - t0)
+    return 0
+
+
 def cmd_not_yet(part: str):
     def run(args: argparse.Namespace) -> int:
         log.error("`%s` is implemented in part %s, which does not exist yet", args.cmd, part)
@@ -247,13 +329,16 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--player", type=Path, default=DEFAULT_OUT / "player.json")
     s.set_defaults(func=cmd_solve)
 
-    s = sub.add_parser("recommend", parents=[common], help="part 06")
+    s = sub.add_parser("recommend", parents=[common], help="one-shot lookahead at a point")
     s.add_argument("hole", choices=(*REAL_HOLES, TOY))
-    s.add_argument("--x", type=float, required=True)
+    s.add_argument("--x", type=float, required=True, help="grid metres")
     s.add_argument("--y", type=float, required=True)
-    s.add_argument("--lie", default=None)
+    s.add_argument("--lie", choices=tuple(LIE_BY_NAME), default=None, help="override the lie")
     s.add_argument("--mode", choices=PENALTY_MODES, required=True)
-    s.set_defaults(func=cmd_not_yet("06"))
+    s.add_argument("--player", type=Path, default=DEFAULT_OUT / "player.json")
+    s.add_argument("--m", type=int, default=100, help="draws per action")
+    s.add_argument("--seed", type=int, default=0)
+    s.set_defaults(func=cmd_recommend)
 
     s = sub.add_parser("evaluate", parents=[common], help="part 07")
     s.add_argument("hole", choices=(*REAL_HOLES, TOY))
