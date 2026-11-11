@@ -105,3 +105,27 @@ def test_memoise_policy_decides_each_cell_once(toy_drop):
     assert pol(2.6, 2.4, Lie.TEE) == (0, 45)  # same cell
     assert pol(2.5, 2.5, Lie.ROUGH) == (0, 45)  # a different lie is a different state
     assert len(calls) == 2
+
+
+# --- slice 3: greedy -----------------------------------------------------------------------------
+
+
+def test_greedy_hits_the_driver_at_the_pin_on_the_open_hole():
+    from tests.fixtures.benchmark_holes import open_straight, three_club
+
+    hole, player = open_straight(), three_club()
+    greedy = APPROACHES["greedy"].build(hole, player, None, "drop")
+    club, direction = greedy(*hole.tee_xy, Lie.TEE)
+    assert player.club_order[club] == "driver"
+    assert abs(float(DIRECTIONS_DEG[direction])) <= 2.0
+
+
+def test_greedy_is_no_better_than_grid_on_the_toy(toy_drop):
+    from caddie.evaluate import simulate
+
+    solution, hole, player = toy_drop
+    grid = APPROACHES["grid"].build(hole, player, solution, "drop")
+    greedy = memoise_policy(hole, APPROACHES["greedy"].build(hole, player, None, "drop"))
+    a = simulate(hole, player, grid, "drop", n=2000, seed=0)
+    b = simulate(hole, player, greedy, "drop", n=2000, seed=0)
+    assert b.mean() >= a.mean() - 0.02

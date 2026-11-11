@@ -18,7 +18,16 @@ import numpy as np
 from caddie.dispersion import Player
 from caddie.evaluate import Policy, centre_policy, optimal_policy, pin_policy
 from caddie.geometry import Hole
-from caddie.mdp import DIRECTIONS_DEG, Lie, PenaltyMode
+from caddie.mdp import (
+    DIRECTIONS_DEG,
+    Lie,
+    PenaltyMode,
+    build_offset_tables,
+    candidate_actions,
+    cell_xy,
+    make_draws,
+    step_batch,
+)
 from caddie.online import recommend
 from caddie.value_iteration import NO_ACTION, PLAYABLE_LIES, Solution
 
@@ -154,6 +163,49 @@ def build_centre(
     return centre_policy(hole, player)
 
 
+# --- greedy: minimise the expected distance to the pin after one shot ---------------------------
+
+GREEDY_DRAWS = 200
+
+
+def greedy_policy(
+    hole: Hole, player: Player, mode: PenaltyMode, K: int = GREEDY_DRAWS, seed: int = 0
+) -> Policy:
+    """No lookahead: the (club, direction) whose landing is closest to the pin on average.
+
+    Landings are taken through :func:`caddie.mdp.step_batch` from the containing cell, so
+    water and OB count from where the ball plays next under ``mode`` (the drop cell, or
+    the origin under replay and mulligan), not from where it splashed.
+    """
+    tables = build_offset_tables(player, make_draws(K, seed))
+    px, py = hole.pin_xy
+
+    def policy(x: float, y: float, lie: Lie) -> tuple[int, int]:
+        idx = np.array([cell_index(hole, x, y)])
+        from_lie = np.array([int(lie)])
+        best, best_d = (0, nearest_dir_index(0.0)), np.inf
+        for ci, di in candidate_actions(hole, player, (x, y)):
+            nxt, _ = step_batch(hole, player, idx, from_lie, int(ci), int(di), tables, mode)
+            nx, ny = cell_xy(hole, nxt[0])
+            d = float(np.mean(np.hypot(nx - px, ny - py)))
+            if d < best_d:
+                best, best_d = (int(ci), int(di)), d
+        return best
+
+    return policy
+
+
+def build_greedy(
+    hole: Hole,
+    player: Player,
+    solution: Solution | None,
+    mode: PenaltyMode,
+    K: int = GREEDY_DRAWS,
+    seed: int = 0,
+) -> Policy:
+    return greedy_policy(hole, player, mode, K=K, seed=seed)
+
+
 # --- the new four (filled in by later slices) ---------------------------------------------------
 
 
@@ -169,7 +221,7 @@ APPROACHES: dict[str, Approach] = {
     "rollout": Approach("rollout", build_rollout, point_rollout, needs_solution=True, memoise=True),
     "pin": Approach("pin", build_pin, None, needs_solution=False),
     "centre": Approach("centre", build_centre, None, needs_solution=False),
-    "greedy": Approach("greedy", _later("greedy", 3), None, needs_solution=False, memoise=True),
+    "greedy": Approach("greedy", build_greedy, None, needs_solution=False, memoise=True),
     "risk": Approach("risk", _later("risk", 6), None, needs_solution=True),
     "sparse2": Approach(
         "sparse2", _later("sparse2", 7), _later("sparse2", 7), needs_solution=True, memoise=True
