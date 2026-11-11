@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react'
 
 import { HoleMap } from './components/HoleMap'
-import { loadBundle } from './lib/loader'
-import type { HoleBundle, Mode } from './lib/types'
-
-export type HoleId = 10 | 11 | 12 | 'toy'
+import { LieButtons } from './components/LieButtons'
+import { loadBundle, loadPlayer } from './lib/loader'
+import type { Mode } from './lib/types'
+import { type HoleId, useStore } from './store'
 export const HOLES: HoleId[] = [10, 11, 12, 'toy']
 export const MODES: Mode[] = ['mulligan', 'drop', 'replay']
 
@@ -39,11 +39,22 @@ function Picker<T extends string | number>({ label, value, options, onChange }: 
 }
 
 export default function App() {
-  const [hole, setHole] = useState<HoleId>('toy')
-  const [mode, setMode] = useState<Mode>('drop')
-  const [tee, setTee] = useState('black')
-  const [bundle, setBundle] = useState<HoleBundle | null>(null)
+  const hole = useStore((s) => s.hole)
+  const mode = useStore((s) => s.mode)
+  const tee = useStore((s) => s.tee)
+  const bundle = useStore((s) => s.bundle)
+  const recommendation = useStore((s) => s.recommendation)
+  const ball = useStore((s) => s.ball)
+  const setHole = useStore((s) => s.setHole)
+  const setMode = useStore((s) => s.setMode)
+  const setTee = useStore((s) => s.setTee)
   const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    loadPlayer()
+      .then((player) => useStore.setState({ player }))
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -51,8 +62,9 @@ export default function App() {
     loadBundle(hole, mode)
       .then((b) => {
         if (cancelled) return
-        setBundle(b)
-        setTee((t) => (t in b.meta.tees ? t : 'black' in b.meta.tees ? 'black' : Object.keys(b.meta.tees)[0]))
+        useStore.setState({ bundle: b, ball: null, lieOverride: null })
+        const { tee: current, setTee: pick } = useStore.getState()
+        pick(current in b.meta.tees ? current : 'black' in b.meta.tees ? 'black' : Object.keys(b.meta.tees)[0])
       })
       .catch((e: unknown) => {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e))
@@ -76,11 +88,22 @@ export default function App() {
             par {bundle.meta.par} · {bundle.meta.rows} x {bundle.meta.cols} cells
           </span>
         )}
+        {ball && (
+          <span className="text-sm text-slate-300" data-testid="ball">
+            ball {ball.x.toFixed(1)}, {ball.y.toFixed(1)} m
+          </span>
+        )}
+        {recommendation && (
+          <span className="text-sm text-emerald-300" data-testid="recommendation">
+            {recommendation.club} at {recommendation.dir_deg} deg · {recommendation.expected_strokes.toFixed(2)} strokes
+          </span>
+        )}
         {error && <span className="text-sm text-rose-400">{error}</span>}
       </header>
       <main className="relative flex-1">
         <HoleMap bundle={bundle} tee={tee} />
       </main>
+      <LieButtons />
     </div>
   )
 }
