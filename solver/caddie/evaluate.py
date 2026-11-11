@@ -28,7 +28,7 @@ from caddie.mdp import (
     terminal_values,
 )
 from caddie.putting import build_putting_table
-from caddie.value_iteration import NO_ACTION, Solution
+from caddie.value_iteration import NO_ACTION, Solution, solve
 
 log = logging.getLogger(__name__)
 
@@ -299,3 +299,54 @@ def bootstrap_fit(
             players.append(build_player(path, putting, handicap))
     log.info("bootstrapped %d players from %s", n_boot, shots_path)
     return players
+
+
+# --- slice 5: robustness to the fit (Ch 14.3) ---------------------------------------------------
+
+
+def robustness(
+    hole: Hole,
+    players: list[Player],
+    mode: PenaltyMode,
+    reference: Solution | None = None,
+    K: int = 200,
+    tol: float = 0.01,
+    max_sweeps: int = 100,
+    seed: int = 0,
+) -> dict:
+    """Re-solve the hole for every bootstrap player.
+
+    Reports the tee value's mean and 5th and 95th percentiles across bootstraps, every tee
+    value, and each bootstrap policy's disagreement with ``reference`` (the point-estimate
+    solution; when None, the first bootstrap's solution is the reference).
+    """
+    if not players:
+        raise ValueError("robustness needs at least one player")
+    tee = _cell_index(hole, *hole.tee_xy)
+    tee_values: list[float] = []
+    solutions: list[Solution] = []
+    for k, player in enumerate(players):
+        sol = solve(hole, player, mode, K=K, tol=tol, max_sweeps=max_sweeps, seed=seed)
+        solutions.append(sol)
+        tee_values.append(float(sol.U[tee]))
+        log.info("bootstrap %d of %d: tee value %.3f", k + 1, len(players), tee_values[-1])
+    ref = reference if reference is not None else solutions[0]
+    flat = hole.lie.reshape(-1)
+    cells = np.flatnonzero(
+        np.isin(flat, [int(Lie.TEE), int(Lie.FAIRWAY), int(Lie.ROUGH), int(Lie.BUNKER)])
+        & (ref.club != NO_ACTION)
+    )
+    disagree = [
+        float(np.mean((s.club[cells] != ref.club[cells]) | (s.dir[cells] != ref.dir[cells])))
+        for s in solutions
+    ]
+    values = np.array(tee_values)
+    return {
+        "n_boot": len(players),
+        "tee_value_mean": float(values.mean()),
+        "tee_value_p05": float(np.percentile(values, 5)),
+        "tee_value_p95": float(np.percentile(values, 95)),
+        "tee_values": tee_values,
+        "disagreement": disagree,
+        "reference_tee_value": float(ref.U[tee]),
+    }

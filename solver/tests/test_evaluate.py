@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
 import pytest
 
+from caddie.dispersion import Player
 from caddie.evaluate import (
     bootstrap_fit,
     centre_policy,
     evaluate_hole,
     optimal_policy,
     pin_policy,
+    robustness,
     simulate,
 )
 from caddie.mdp import DIRECTIONS_DEG, Lie
@@ -171,3 +174,39 @@ def test_bootstrap_fit_is_seeded():
     a = bootstrap_fit(FIXTURE_CSV, n_boot=2, seed=1, putting_path=PUTTING_CSV, handicap=15)
     b = bootstrap_fit(FIXTURE_CSV, n_boot=2, seed=1, putting_path=PUTTING_CSV, handicap=15)
     assert [p.clubs["driver"].mu_c for p in a] == [p.clubs["driver"].mu_c for p in b]
+
+
+# --- slice 5: robustness --------------------------------------------------------------------
+
+
+def _jittered_players(base: Player, n: int, seed: int) -> list[Player]:
+    """Toy stand-ins for bootstrap players: the toy club with carry jittered by a few percent."""
+    rng = np.random.default_rng(seed)
+    out = []
+    for _ in range(n):
+        mu = base.clubs[TOY_CLUB].mu_c * (1 + rng.normal(0, 0.03))
+        club = replace(base.clubs[TOY_CLUB], mu_c=mu)
+        out.append(replace(base, clubs={TOY_CLUB: club}))
+    return out
+
+
+def test_robustness_percentiles_bracket_the_point_estimate(toy_drop):
+    solution, hole, player = toy_drop
+    players = _jittered_players(player, 5, seed=0)
+    rob = robustness(hole, players, "drop", reference=solution, K=200, tol=0.01, max_sweeps=50)
+    assert set(rob) >= {
+        "n_boot",
+        "tee_value_mean",
+        "tee_value_p05",
+        "tee_value_p95",
+        "tee_values",
+        "disagreement",
+    }
+    assert rob["n_boot"] == 5 and len(rob["tee_values"]) == 5
+    tee = int(hole.tee_xy[1] // hole.cell_m) * hole.cols + int(hole.tee_xy[0] // hole.cell_m)
+    point = float(solution.U[tee])
+    assert rob["tee_value_p05"] <= point + 0.05
+    assert rob["tee_value_p95"] >= point - 0.05
+    assert rob["tee_value_p05"] <= rob["tee_value_mean"] <= rob["tee_value_p95"]
+    assert len(rob["disagreement"]) == 5
+    assert all(0.0 <= d <= 1.0 for d in rob["disagreement"])
