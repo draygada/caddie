@@ -16,10 +16,11 @@ import {
 import 'maplibre-gl/dist/maplibre-gl.css'
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url'
 import type { Feature as GJFeature, FeatureCollection, Geometry } from 'geojson'
-import { useEffect, useRef, useState } from 'react'
+import { type ReactNode, useEffect, useRef, useState } from 'react'
 
 import { AimArrow } from './AimArrow'
 import { BallMarker } from './BallMarker'
+import { MapLabels } from './MapLabels'
 import { PlayItOutLayer } from './PlayItOut'
 
 import { gridCorners, gridToLonLat } from '../lib/geo'
@@ -33,14 +34,32 @@ export const ESRI_TILES =
 export const ESRI_ATTRIBUTION = 'Esri, Maxar, Earthstar Geographics'
 export const MAX_ZOOM = 19
 export const HEAT_OPACITY = 0.55
-export const FIT_PADDING_PX = 40
+export const FIT_PADDING_PX = 24
+
+/** Collapsed bottom sheet height on a phone, so the fit keeps the hole above it. */
+export const SHEET_PADDING_PX = 270
+export const TOP_BAR_PADDING_PX = 88
+
+function isPhone(): boolean {
+  return typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches
+}
+
+/** Padding that keeps the fitted grid clear of the floating top bar, the map buttons and the sheet. */
+export function fitPadding(): { top: number; bottom: number; left: number; right: number } {
+  return {
+    top: TOP_BAR_PADDING_PX,
+    bottom: isPhone() ? SHEET_PADDING_PX : FIT_PADDING_PX,
+    left: FIT_PADDING_PX,
+    right: FIT_PADDING_PX,
+  }
+}
 
 /** Bearing = hole bearing, so +y points up the screen, then fit the rotated grid. */
 export function fitToGrid(map: MLMap, meta: Meta): void {
   const bounds = new LngLatBounds()
   for (const [lon, lat] of gridCorners(meta)) bounds.extend([lon, lat])
   map.setBearing(meta.rotation_deg)
-  map.fitBounds(bounds, { padding: FIT_PADDING_PX, bearing: meta.rotation_deg, duration: 0 })
+  map.fitBounds(bounds, { padding: fitPadding(), bearing: meta.rotation_deg, duration: 0 })
 }
 
 /** Polygon kinds in draw order; colours come from the --t-* tokens (docs/design.md). */
@@ -113,6 +132,43 @@ const STYLE: StyleSpecification = {
   layers: [{ id: 'esri', type: 'raster', source: 'esri' }],
 }
 
+const HEAT_KEY = 'caddie.heat'
+function readHeatOn(): boolean {
+  try {
+    return localStorage.getItem(HEAT_KEY) !== 'off'
+  } catch {
+    return true
+  }
+}
+
+/** 48 px map button on the panel surface; `pressed` fills it for a toggle that is on. */
+function MapButton({
+  label,
+  pressed,
+  onClick,
+  children,
+}: {
+  label: string
+  pressed?: boolean
+  onClick: () => void
+  children: ReactNode
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      aria-pressed={pressed}
+      onClick={onClick}
+      className={`flex h-12 w-12 items-center justify-center rounded-xl shadow-[0_1px_2px_rgba(0,0,0,0.2),0_4px_12px_rgba(0,0,0,0.12)] transition-colors ${
+        pressed ? 'bg-ink text-surface' : 'bg-surface-2 text-ink'
+      }`}
+    >
+      {children}
+    </button>
+  )
+}
+
 export interface HoleMapProps {
   bundle: HoleBundle | null
   tee: string
@@ -123,6 +179,7 @@ export function HoleMap({ bundle, tee }: HoleMapProps) {
   const mapRef = useRef<MLMap | null>(null)
   const [map, setMap] = useState<MLMap | null>(null)
   const teeRef = useRef(tee)
+  const [heatOn, setHeatOn] = useState<boolean>(readHeatOn)
 
   // Mount once.
   useEffect(() => {
@@ -135,9 +192,10 @@ export function HoleMap({ bundle, tee }: HoleMapProps) {
       maxZoom: MAX_ZOOM,
       attributionControl: false,
     })
-    map.addControl(new NavigationControl({ showCompass: false }), 'top-right')
-    // top-left so the bottom sheet never covers it on a phone
-    map.addControl(new AttributionControl({ compact: false }), 'top-left')
+    // bottom-right: a mouse affordance; hidden under 768 px where the user pinches
+    map.addControl(new NavigationControl({ showCompass: false }), 'bottom-right')
+    // top-left under the floating top bar, so the bottom sheet never covers it on a phone
+    map.addControl(new AttributionControl({ compact: true }), 'top-left')
     mapRef.current = map
     setMap(map)
     return () => {
@@ -205,6 +263,20 @@ export function HoleMap({ bundle, tee }: HoleMapProps) {
     return whenStyleReady(map, apply)
   }, [bundle])
 
+  // Heatmap on or off: remembered per device (docs/design.md section 9).
+  useEffect(() => {
+    try {
+      localStorage.setItem(HEAT_KEY, heatOn ? 'on' : 'off')
+    } catch {
+      /* private mode */
+    }
+    const map = mapRef.current
+    if (!map) return
+    return whenStyleReady(map, () => {
+      if (map.getLayer('heat')) map.setLayoutProperty('heat', 'visibility', heatOn ? 'visible' : 'none')
+    })
+  }, [heatOn, bundle])
+
   // Pin and the selected tee.
   useEffect(() => {
     teeRef.current = tee
@@ -222,6 +294,26 @@ export function HoleMap({ bundle, tee }: HoleMapProps) {
       {map && <BallMarker map={map} />}
       {map && <AimArrow map={map} />}
       {map && <PlayItOutLayer map={map} />}
+      {map && <MapLabels map={map} />}
+      <div className="absolute top-16 right-2 z-10 flex flex-col gap-2 safe-top">
+        <MapButton
+          label={heatOn ? 'Hide strokes-to-go heatmap' : 'Show strokes-to-go heatmap'}
+          pressed={heatOn}
+          onClick={() => setHeatOn((v) => !v)}
+        >
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" aria-hidden="true">
+            <path d="M12 3 2 8l10 5 10-5-10-5Z" />
+            <path d="m2 12 10 5 10-5" />
+            <path d="m2 16 10 5 10-5" />
+          </svg>
+        </MapButton>
+        <MapButton label="Recenter on the hole" onClick={() => bundle && map && fitToGrid(map, bundle.meta)}>
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="7" />
+            <path d="M12 2v4M12 18v4M2 12h4M18 12h4" />
+          </svg>
+        </MapButton>
+      </div>
     </div>
   )
 }

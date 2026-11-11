@@ -136,8 +136,11 @@ export default function App() {
 
   return (
     <div className="flex h-full flex-col bg-surface text-ink">
-      <header className="safe-top border-b border-line bg-surface px-4">
-        <div className="flex h-14 items-center gap-3">
+      <main className="relative min-h-0 flex-1 md:flex">
+        <div className="relative h-full min-w-0 flex-1">
+          <HoleMap bundle={bundle} tee={tee} />
+      <header className="safe-top pointer-events-none absolute inset-x-0 top-0 z-10 px-2 pt-2">
+        <div className="pointer-events-auto flex h-14 items-center gap-3 rounded-xl bg-surface/95 px-3 shadow-[0_1px_2px_rgba(0,0,0,0.2),0_4px_12px_rgba(0,0,0,0.12)]">
           <h1 className="text-body font-semibold">Caddie</h1>
           <Picker label="Hole" value={hole} options={HOLES} onChange={(v) => setHole(parseHole(v))} />
           {bundle && (
@@ -161,17 +164,16 @@ export default function App() {
             {tee.charAt(0).toUpperCase() + tee.slice(1)} · {MODE_LABEL[mode]}
           </button>
         </div>
-        <div id="top-bar-more" className={`${moreOpen ? 'flex' : 'hidden'} flex-wrap items-center gap-3 pb-3 md:hidden`}>
+        <div
+          id="top-bar-more"
+          className={`${moreOpen ? 'flex' : 'hidden'} pointer-events-auto mt-2 flex-wrap items-center gap-3 rounded-xl bg-surface/95 p-3 shadow-[0_1px_2px_rgba(0,0,0,0.2),0_4px_12px_rgba(0,0,0,0.12)] md:hidden`}
+        >
           <Picker label="Tee" value={tee} options={tees} onChange={setTee} render={(t) => t.charAt(0).toUpperCase() + t.slice(1)} />
           <ModeControl value={mode} onChange={setMode} />
           <ThemeToggle theme={theme} onToggle={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))} />
         </div>
       </header>
-
-      <main className="relative min-h-0 flex-1 md:flex">
-        <div className="relative h-full min-w-0 flex-1">
-          <HoleMap bundle={bundle} tee={tee} />
-          <div className="pointer-events-none absolute inset-x-0 bottom-0 md:hidden">
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 md:hidden">
             <CaddiePanel />
           </div>
         </div>
