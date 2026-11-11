@@ -7,12 +7,15 @@ between the simulated mean and the value grid is a bug and not a modelling diffe
 
 from __future__ import annotations
 
+import csv
 import logging
+import tempfile
 from collections.abc import Callable
+from pathlib import Path
 
 import numpy as np
 
-from caddie.dispersion import Player
+from caddie.dispersion import SHOTS_COLUMNS, Player, build_player, load_shots
 from caddie.geometry import Hole
 from caddie.mdp import (
     DIRECTIONS_DEG,
@@ -24,6 +27,7 @@ from caddie.mdp import (
     step_batch,
     terminal_values,
 )
+from caddie.putting import build_putting_table
 from caddie.value_iteration import NO_ACTION, Solution
 
 log = logging.getLogger(__name__)
@@ -248,3 +252,50 @@ def evaluate_hole(
         "policies": out,
         "strokes_saved_label": STROKES_SAVED_LABEL,
     }
+
+
+# --- slice 4: bootstrap the fit (Ch 14.3) --------------------------------------------------------
+
+SOLVER_DIR = Path(__file__).resolve().parents[1]
+DEFAULT_PUTTING = SOLVER_DIR / "data" / "raw" / "putting.csv"
+DEFAULT_HANDICAP = 15  # root CLAUDE.md
+
+
+def bootstrap_fit(
+    shots_path: Path,
+    n_boot: int = 50,
+    seed: int = 0,
+    putting_path: Path = DEFAULT_PUTTING,
+    handicap: int = DEFAULT_HANDICAP,
+) -> list[Player]:
+    """Refit the player ``n_boot`` times on shots resampled per club with replacement.
+
+    Each resample is written as a canonical CSV to a temporary file and fitted with
+    part 02's ``build_player``, so the bootstrap sees exactly the production fit.
+    """
+    shots = load_shots(shots_path)
+    putting = build_putting_table(Path(putting_path))
+    rng = np.random.default_rng(seed)
+    players: list[Player] = []
+    with tempfile.TemporaryDirectory() as tmp:
+        for b in range(n_boot):
+            path = Path(tmp) / f"boot_{b}.csv"
+            with path.open("w", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow(SHOTS_COLUMNS)
+                for club, rows in shots.items():
+                    pick = rng.integers(0, len(rows), size=len(rows))
+                    for row in rows[pick]:
+                        writer.writerow(
+                            [
+                                club,
+                                f"{row['carry_m']:.3f}",
+                                f"{row['total_m']:.3f}",
+                                f"{row['lateral_m']:.3f}",
+                                row["lie"],
+                                row["date"],
+                            ]
+                        )
+            players.append(build_player(path, putting, handicap))
+    log.info("bootstrapped %d players from %s", n_boot, shots_path)
+    return players
