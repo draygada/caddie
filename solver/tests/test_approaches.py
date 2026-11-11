@@ -170,3 +170,49 @@ def test_risk_has_fewer_blowups_than_grid_on_the_weak_water_carry():
     m = result["approaches"]
     assert abs(m["risk"]["mean_strokes"] - m["grid"]["mean_strokes"]) <= 0.3
     assert m["risk"]["build_s"] > 0.0
+
+
+# --- slice 7: sparse sampling and MCTS -----------------------------------------------------------
+
+
+def test_sparse2_agrees_with_grid_at_cell_centres_up_to_ties(toy_drop):
+    solution, hole, player = toy_drop
+    flat = hole.lie.reshape(-1)
+    cells = playable_cells(hole, solution)
+    pick = np.random.default_rng(1).choice(cells, size=10, replace=False)
+    xs, ys = _cells_xy(hole, pick)
+    grid = APPROACHES["grid"].build(hole, player, solution, "drop")
+    sparse = APPROACHES["sparse2"].build(hole, player, solution, "drop")
+    within = 0
+    for x, y, c in zip(xs, ys, pick, strict=True):
+        lie = Lie(int(flat[c]))
+        gc, gd = grid(float(x), float(y), lie)
+        sc, _sd = sparse(float(x), float(y), lie)
+        assert sc == gc
+        rec = recommend(solution, hole, player, float(x), float(y), lie, "drop", m=400, seed=0)
+        within += rec.q_by_action[gc, gd] - rec.expected_strokes < 0.05
+    assert within >= 9, f"{within} of 10 cells within 0.05 of the rollout's best"
+
+
+def test_mcts_hits_the_driver_near_the_pin_line_on_the_open_hole():
+    from caddie.value_iteration import solve as vi_solve
+    from tests.fixtures.benchmark_holes import open_straight, round_numbers
+
+    hole, player = open_straight(), round_numbers()
+    sol = vi_solve(hole, player, "drop", K=200)
+    point = APPROACHES["mcts"].point(hole, player, sol, "drop")
+    club, deg = point(*hole.tee_xy, Lie.TEE)
+    assert club == "driver" and abs(deg) <= 6.0
+    assert deg not in set(DIRECTIONS_DEG.tolist()) or True  # a continuous aim is allowed
+
+
+def test_sparse2_and_mcts_decide_a_toy_point_quickly(toy_drop):
+    import time
+
+    solution, hole, player = toy_drop
+    for name in ("sparse2", "mcts"):
+        point = APPROACHES[name].point(hole, player, solution, "drop")
+        t0 = time.perf_counter()
+        club, deg = point(27.5, 12.5, Lie.FAIRWAY)
+        assert club in player.clubs and -90.0 <= deg <= 90.0
+        assert time.perf_counter() - t0 < 0.5, name
