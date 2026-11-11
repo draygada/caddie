@@ -94,3 +94,70 @@ export function histogramMean(h: Map<number, number>): number {
   }
   return n === 0 ? NaN : sum / n
 }
+
+// --- animation (slice 5) ----------------------------------------------------------------------
+
+export const MS_PER_SHOT = 600
+
+export interface AnimationFrame {
+  /** index of the shot in flight or just finished; -1 for no shots */
+  index: number
+  pos: XY | null
+  done: boolean
+}
+
+function smoothstep(t: number): number {
+  const u = Math.min(Math.max(t, 0), 1)
+  return u * u * (3 - 2 * u)
+}
+
+/** Ball position `elapsedMs` into an animation of `shots`, `msPerShot` each, eased in and out. */
+export function animationPosition(shots: Shot[], elapsedMs: number, msPerShot = MS_PER_SHOT): AnimationFrame {
+  if (shots.length === 0) return { index: -1, pos: null, done: true }
+  const total = shots.length * msPerShot
+  if (elapsedMs >= total) {
+    const last = shots[shots.length - 1]
+    return { index: shots.length - 1, pos: { x: last.to.x, y: last.to.y }, done: true }
+  }
+  const index = Math.min(Math.floor(elapsedMs / msPerShot), shots.length - 1)
+  const t = smoothstep((elapsedMs - index * msPerShot) / msPerShot)
+  const s = shots[index]
+  return {
+    index,
+    pos: { x: s.from.x + (s.to.x - s.from.x) * t, y: s.from.y + (s.to.y - s.from.y) * t },
+    done: false,
+  }
+}
+
+// --- histogram view (slice 6) -------------------------------------------------------------------
+
+export interface HistogramBin {
+  label: string
+  count: number
+  isPar: boolean
+}
+
+/** Bars for par - 2 .. par + 4 with overflow bins `<par-2` and `>par+4`. */
+export function histogramBins(h: Map<number, number>, par: number): HistogramBin[] {
+  const lo = par - 2
+  const hi = par + 4
+  const bins: HistogramBin[] = [{ label: `<${lo}`, count: 0, isPar: false }]
+  for (let s = lo; s <= hi; s++) bins.push({ label: String(s), count: h.get(s) ?? 0, isPar: s === par })
+  bins.push({ label: `>${hi}`, count: 0, isPar: false })
+  for (const [strokes, count] of h) {
+    if (strokes < lo) bins[0].count += count
+    else if (strokes > hi) bins[bins.length - 1].count += count
+  }
+  return bins
+}
+
+/** Share of play-outs at or above par + 3 (double bogey or worse); NaN for an empty histogram. */
+export function blowUpShare(h: Map<number, number>, par: number): number {
+  let n = 0
+  let bad = 0
+  for (const [strokes, count] of h) {
+    n += count
+    if (strokes >= par + 3) bad += count
+  }
+  return n === 0 ? NaN : bad / n
+}

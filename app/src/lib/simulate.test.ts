@@ -2,7 +2,17 @@ import { describe, expect, it } from 'vitest'
 
 import { valueNearest } from './grid'
 import { mulberry32 } from './rng'
-import { histogram, MAX_SHOTS, playOut, samplePutts } from './simulate'
+import {
+  animationPosition,
+  blowUpShare,
+  histogram,
+  histogramBins,
+  histogramMean,
+  MAX_SHOTS,
+  playOut,
+  samplePutts,
+  type Shot,
+} from './simulate'
 import { readToyBundle, toyPlayerDoc } from './toyFiles'
 
 const b = readToyBundle()
@@ -85,5 +95,67 @@ describe('histogram', () => {
     const a = histogram(b, player, tee, 2, 'drop', 200, 7)
     const c = histogram(b, player, tee, 2, 'drop', 200, 7)
     expect([...a.entries()].sort()).toEqual([...c.entries()].sort())
+  })
+})
+
+describe('animationPosition (slice 5)', () => {
+  const shots: Shot[] = [
+    { from: { x: 0, y: 0 }, to: { x: 10, y: 0 }, club: 'a', dir_deg: 0, lie: 2, reward: -1 },
+    { from: { x: 10, y: 0 }, to: { x: 10, y: 20 }, club: 'a', dir_deg: 0, lie: 2, reward: -1 },
+  ]
+
+  it('interpolates within the current shot and reports the completed ones', () => {
+    expect(animationPosition(shots, 0, 600)).toEqual({ index: 0, pos: { x: 0, y: 0 }, done: false })
+    expect(animationPosition(shots, 300, 600)).toEqual({ index: 0, pos: { x: 5, y: 0 }, done: false })
+    expect(animationPosition(shots, 900, 600)).toEqual({ index: 1, pos: { x: 10, y: 10 }, done: false })
+  })
+
+  it('is done at the last shot end and clamps beyond it', () => {
+    expect(animationPosition(shots, 1200, 600)).toEqual({ index: 1, pos: { x: 10, y: 20 }, done: true })
+    expect(animationPosition(shots, 5000, 600)).toEqual({ index: 1, pos: { x: 10, y: 20 }, done: true })
+    expect(animationPosition([], 0, 600)).toEqual({ index: -1, pos: null, done: true })
+  })
+
+  it('eases in and out: slow off the club face and slow into the landing', () => {
+    const quarter = animationPosition(shots, 150, 600).pos
+    const threeQuarter = animationPosition(shots, 450, 600).pos
+    expect(quarter?.x).toBeLessThan(2.5)
+    expect(10 - (threeQuarter?.x ?? 0)).toBeLessThan(2.5)
+  })
+})
+
+describe('histogram bins and blow-up (slice 6)', () => {
+  const h = new Map<number, number>([
+    [2, 10],
+    [3, 200],
+    [4, 400],
+    [5, 250],
+    [6, 90],
+    [7, 30],
+    [8, 15],
+    [11, 5],
+  ])
+
+  it('bins par - 2 to par + 4 with overflow bins at both ends', () => {
+    const bins = histogramBins(h, 4)
+    expect(bins.map((b) => b.label)).toEqual(['<2', '2', '3', '4', '5', '6', '7', '8', '>8'])
+    expect(bins.map((b) => b.count)).toEqual([0, 10, 200, 400, 250, 90, 30, 15, 5])
+    expect(bins.reduce((s, b) => s + b.count, 0)).toBe(1000)
+    expect(bins[3].isPar).toBe(true)
+  })
+
+  it('puts scores below par - 2 in the low overflow bin', () => {
+    const bins = histogramBins(new Map([[1, 3], [2, 4]]), 4)
+    expect(bins[0].count).toBe(3)
+    expect(bins[1].count).toBe(4)
+  })
+
+  it('blow-up is the share at or above par + 3', () => {
+    expect(blowUpShare(h, 4)).toBeCloseTo((30 + 15 + 5) / 1000, 9)
+    expect(blowUpShare(new Map(), 4)).toBeNaN()
+  })
+
+  it('histogramMean averages the counts', () => {
+    expect(histogramMean(h)).toBeCloseTo((20 + 600 + 1600 + 1250 + 540 + 210 + 120 + 55) / 1000, 9)
   })
 })

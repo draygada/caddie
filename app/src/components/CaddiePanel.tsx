@@ -5,6 +5,7 @@
  */
 import type { Meta, XY } from '../lib/types'
 import { useStore } from '../store'
+import { PlayItOut } from './PlayItOut'
 
 export const M_PER_YD = 0.9144
 
@@ -59,6 +60,7 @@ export function CaddiePanel() {
               Aim at pin with {recommendation.club}: {recommendation.baseline_pin_strokes.toFixed(1)}
             </div>
           )}
+          <PlayItOut />
         </>
       ) : (
         <div className="text-sm text-slate-400">
