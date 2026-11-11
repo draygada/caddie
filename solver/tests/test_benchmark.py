@@ -91,6 +91,23 @@ def test_load_cases_builds_every_synthetic_case(tmp_path: Path):
     assert front.start[2] == Lie.FAIRWAY
 
 
+def test_solution_cache_keys_include_the_player(tmp_path: Path):
+    """Two cases on the same hole with different players must not share a solution."""
+    from caddie.benchmark import load_cases
+
+    keys = []
+
+    def fake(hole, player, mode, key, out_dir):
+        keys.append(key)
+        return None
+
+    load_cases(CASES_PATH, tmp_path, ids=["water-carry-weak", "water-carry-strong"], solve_fn=fake)
+    assert len(keys) == 2 and keys[0] != keys[1]
+    assert all(
+        k.startswith("water_carry_water_from_m180_water_to_m200__round_numbers") for k in keys
+    )
+
+
 def test_load_cases_rejects_an_unknown_builder(tmp_path: Path):
     bad = tmp_path / "cases.json"
     bad.write_text(

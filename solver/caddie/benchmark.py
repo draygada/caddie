@@ -43,7 +43,8 @@ class Case:
     n: int
     expect: list[dict]
     solution: Solution | None
-    hole_key: str = ""  # "toy", "open_straight", "11", ... for file names and the solution cache
+    hole_key: str = ""  # "toy", "open_straight", "11", ... for file names
+    solution_key: str = ""  # hole key plus player key: the solution cache name
     out_dir: Path | None = None  # where solutions are cached; None means no cache
     extras: dict = field(default_factory=dict)  # e.g. brute-force value for a band expectation
 
@@ -70,6 +71,12 @@ def _build_hole(spec: dict, out_dir: Path) -> tuple[Hole, Solution | None, str, 
         raise ValueError(f"unknown hole builder {builder!r}")
     key = builder + ("" if not args else "_" + "_".join(f"{k}{v}" for k, v in sorted(args.items())))
     return bh.HOLE_BUILDERS[builder](**args), None, key, builder, False
+
+
+def _player_key(spec: dict) -> str:
+    args = spec.get("args", {})
+    base = str(spec.get("builder", "file"))
+    return base + ("" if not args else "_" + "_".join(f"{k}{v}" for k, v in sorted(args.items())))
 
 
 def _build_player(spec: dict, out_dir: Path) -> Player:
@@ -180,8 +187,9 @@ def load_cases(
         except FileNotFoundError as e:
             log.warning("case %s skipped: player file %s missing", spec["id"], e)
             continue
+        solution_key = f"{key}__{_player_key(spec['player'])}"
         if sol is None and solve_missing:
-            sol = solve_fn(hole, player, mode, key, out_dir)
+            sol = solve_fn(hole, player, mode, solution_key, out_dir)
         cases.append(
             Case(
                 id=spec["id"],
@@ -193,6 +201,7 @@ def load_cases(
                 expect=list(spec["expect"]),
                 solution=sol,
                 hole_key=key,
+                solution_key=solution_key,
                 out_dir=out_dir,
             )
         )
@@ -286,7 +295,7 @@ def _settings(approach, case: Case, settings: dict | None) -> dict:
             Path(case.out_dir)
             / "benchmark"
             / "solutions"
-            / f"{case.hole_key}_{case.mode}_risk{lam}.npz"
+            / f"{case.solution_key}_{case.mode}_risk{lam}.npz"
         )
     return out
 
