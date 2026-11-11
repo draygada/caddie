@@ -11,11 +11,13 @@ import pytest
 
 from caddie.mdp import DIRECTIONS_DEG, Lie
 from caddie.online import (
+    MAX_SEQUENCE_SHOTS,
     bilinear,
     mulberry32,
     normal,
     recommend,
     sample_landing,
+    sample_sequence,
     write_shot_samples,
 )
 from caddie.value_iteration import solve
@@ -254,3 +256,41 @@ def test_write_shot_samples_fixture():
     for x, y in doc["landings"]:
         shot = sample_landing(hole, player, club, (25.0, 25.0), Lie.FAIRWAY, 10.0, "replay", rng)
         assert [round(shot["to"][0], 4), round(shot["to"][1], 4)] == [x, y]
+
+
+# --- slice 6: sample_sequence ------------------------------------------------------------------
+
+
+def test_sample_sequence_reaches_the_green_within_12_shots(toy_drop):
+    solution, hole, player = toy_drop
+    rng = mulberry32(7)
+    ended = 0
+    n = 300
+    for _ in range(n):
+        shots = sample_sequence(solution, hole, player, hole.tee_xy[0], hole.tee_xy[1], "drop", rng)
+        assert 1 <= len(shots) <= MAX_SEQUENCE_SHOTS
+        for shot in shots:
+            assert set(shot) >= {"club", "dir", "from_xy", "to_xy", "lie", "reward"}
+            assert shot["club"] == TOY_CLUB and shot["reward"] in (-1.0, -2.0)
+        last = shots[-1]
+        if "putts" in last:
+            ended += 1
+            assert last["putts"] == pytest.approx(1.5)  # FlatPutting
+            nx, ny = last["next_xy"]
+            assert hole.lie[int(ny // hole.cell_m), int(nx // hole.cell_m)] == int(Lie.GREEN)
+    assert ended >= 0.99 * n
+
+
+def test_sample_sequence_chains_positions_and_is_seeded(toy_drop):
+    solution, hole, player = toy_drop
+    a = sample_sequence(solution, hole, player, 12.0, 17.0, "replay", mulberry32(3))
+    b = sample_sequence(solution, hole, player, 12.0, 17.0, "replay", mulberry32(3))
+    assert a == b
+    assert a[0]["from_xy"] == [12.0, 17.0]
+    for prev, nxt in zip(a, a[1:], strict=False):
+        assert nxt["from_xy"] == prev["next_xy"]
+
+
+def test_sample_sequence_on_the_green_is_empty(toy_drop):
+    solution, hole, player = toy_drop
+    assert sample_sequence(solution, hole, player, *hole.pin_xy, "drop", mulberry32(1)) == []

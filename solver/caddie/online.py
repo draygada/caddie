@@ -383,3 +383,60 @@ def write_shot_samples(path: Path) -> dict:
     path.write_text(json.dumps(doc, indent=2) + "\n")
     log.info("wrote %s", path)
     return doc
+
+
+# --- slice 6: sample_sequence ------------------------------------------------------------------
+
+MAX_SEQUENCE_SHOTS = 12
+
+
+def sample_sequence(
+    solution: Solution,
+    hole: Hole,
+    player: Player,
+    x: float,
+    y: float,
+    mode: PenaltyMode,
+    rng: Callable[[], float],
+) -> list[dict]:
+    """Play from ``(x, y)`` with the grid policy of the containing cell until the green.
+
+    Each shot is ``{"club", "dir", "from_xy", "to_xy", "next_xy", "lie", "reward"}``; the
+    shot after which the ball is on the green (by landing or by a drop) also carries
+    ``"putts"``, the expected putts from ``next_xy``. Empty when ``(x, y)`` is already on
+    the green. At most ``MAX_SEQUENCE_SHOTS`` shots; the play-it-out animation follows this.
+    """
+    shots: list[dict] = []
+    cx, cy = float(x), float(y)
+    for _ in range(MAX_SEQUENCE_SHOTS):
+        idx, lie_code, _ = locate(hole, np.array([cx]), np.array([cy]))
+        lie = Lie(int(lie_code[0]))
+        if lie == Lie.GREEN or lie not in FROM_LIE_NAME:
+            break
+        club_idx, dir_idx = int(solution.club[idx[0]]), int(solution.dir[idx[0]])
+        if club_idx == 255 or dir_idx == 255:
+            break
+        club_name = player.club_order[club_idx]
+        dir_deg = float(DIRECTIONS_DEG[dir_idx])
+        shot = sample_landing(
+            hole, player, player.clubs[club_name], (cx, cy), lie, dir_deg, mode, rng
+        )
+        record = {
+            "club": club_name,
+            "dir": dir_deg,
+            "from_xy": [cx, cy],
+            "to_xy": shot["to"],
+            "next_xy": shot["next"],
+            "lie": shot["lie"],
+            "reward": shot["reward"],
+        }
+        cx, cy = shot["next"]
+        _, next_lie, _ = locate(hole, np.array([cx]), np.array([cy]))
+        on_green = int(next_lie[0]) == Lie.GREEN  # a drop can land on the green too
+        if on_green:
+            d = math.hypot(cx - hole.pin_xy[0], cy - hole.pin_xy[1])
+            record["putts"] = float(np.asarray(player.putting(d)))
+        shots.append(record)
+        if on_green:
+            break
+    return shots
