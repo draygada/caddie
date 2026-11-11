@@ -4,6 +4,7 @@
  * shot.ts, so the histogram mean should match the value grid within about 0.3 strokes.
  */
 import { distance, lieAt, policyAt } from './grid'
+import { mulberry32 } from './rng'
 import { expectedPutts, sampleShot } from './shot'
 import type { HoleBundle, Lie, Mode, Player, XY } from './types'
 
@@ -62,4 +63,34 @@ export function playOut(b: HoleBundle, player: Player, from: XY, lie: Lie, mode:
   }
   if (currentLie === 5) strokes += samplePutts(expectedPutts(player, distance(pos, pin)), rng)
   return { shots, strokes }
+}
+
+/** Strokes-to-hole-out counts over `n` play-outs from one seed: strokes -> count. */
+export function histogram(
+  b: HoleBundle,
+  player: Player,
+  from: XY,
+  lie: Lie,
+  mode: Mode,
+  n = 1000,
+  seed = 7,
+): Map<number, number> {
+  const rng = mulberry32(seed)
+  const counts = new Map<number, number>()
+  for (let k = 0; k < n; k++) {
+    const { strokes } = playOut(b, player, from, lie, mode, rng)
+    counts.set(strokes, (counts.get(strokes) ?? 0) + 1)
+  }
+  return counts
+}
+
+/** Mean of a histogram. */
+export function histogramMean(h: Map<number, number>): number {
+  let n = 0
+  let sum = 0
+  for (const [strokes, count] of h) {
+    n += count
+    sum += strokes * count
+  }
+  return n === 0 ? NaN : sum / n
 }

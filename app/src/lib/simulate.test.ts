@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
+import { valueNearest } from './grid'
 import { mulberry32 } from './rng'
-import { MAX_SHOTS, playOut, samplePutts } from './simulate'
+import { histogram, MAX_SHOTS, playOut, samplePutts } from './simulate'
 import { readToyBundle, toyPlayerDoc } from './toyFiles'
 
 const b = readToyBundle()
@@ -63,5 +64,26 @@ describe('samplePutts', () => {
     let sum = 0
     for (let k = 0; k < 4000; k++) sum += samplePutts(1.3, rng)
     expect(sum / 4000).toBeCloseTo(1.3, 1)
+  })
+})
+
+describe('histogram', () => {
+  it('counts sum to n and the mean is within 0.3 of valueNearest at the start', () => {
+    const h = histogram(b, player, tee, 2, 'drop', 1000, 7)
+    let n = 0
+    let sum = 0
+    for (const [strokes, count] of h) {
+      n += count
+      sum += strokes * count
+      expect(Number.isInteger(strokes)).toBe(true)
+    }
+    expect(n).toBe(1000)
+    expect(Math.abs(sum / n - valueNearest(b, tee))).toBeLessThan(0.3)
+  })
+
+  it('is deterministic for a seed', () => {
+    const a = histogram(b, player, tee, 2, 'drop', 200, 7)
+    const c = histogram(b, player, tee, 2, 'drop', 200, 7)
+    expect([...a.entries()].sort()).toEqual([...c.entries()].sort())
   })
 })
