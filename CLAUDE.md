@@ -34,6 +34,7 @@ Read this file, then the CLAUDE.md of the half you are working in (`solver/CLAUD
 | Solver | Value iteration, gamma = 1, K = 200 fixed Halton draws per club shared across sweeps, stop at residual < 0.01. |
 | Online | Rollout lookahead at a continuous point, m = 100 draws per action, leaf = bilinear interpolation of the value grid. Python in M1, TS Web Worker in M2. |
 | Evaluation | 2,000 simulated plays per hole per policy. Policies: optimal, pin-longest-club, centre-of-green. Bootstrap the fit 50 times. |
+| Benchmark | Approaches compared on fixed cases with stated expectations (part 16): grid, rollout, pin, centre, greedy, risk (exponential utility, lambda 0.5), sparse sampling depth 2, MCTS. Paired draws, ranked by mean regret, cell and point simulators. A failed expectation is reported, not a test failure. |
 | Output | Per hole per mode: `meta.json, lie.u8, value.f32, club.u8, dir.u8`. |
 | Tee and pin | Grid origin and rotation are fixed at the Black tee; the player may choose any tee box in the app (the value grid does not depend on where you start). Pin fixed at the green centroid. |
 | App M1 | Heatmap, click-to-place ball, club + arrow + expected strokes, play-it-out animation + histogram. |
@@ -109,6 +110,7 @@ Solver (branch `part/0x-...`): see `solver/CLAUDE.md`.
 | 06 | `docs/parts/06-online.md` | `solver/caddie/online.py` |
 | 07 | `docs/parts/07-evaluate.md` | `solver/caddie/evaluate.py` |
 | 08 | `docs/parts/08-export-cli.md` | `solver/caddie/export.py`, `cli.py` |
+| 16 | `docs/parts/16-benchmark.md` | `solver/caddie/benchmark.py`, `approaches.py` |
 
 App (branch `part/1x-...`): see `app/CLAUDE.md`.
 
@@ -121,7 +123,7 @@ App (branch `part/1x-...`): see `app/CLAUDE.md`.
 | 13 | `docs/parts/13-caddie-panel-playitout.md` | `CaddiePanel.tsx`, `PlayItOut.tsx` |
 | 14 | `docs/parts/14-pwa-gps-deploy.md` | GPS hook, PWA config, Vercel |
 
-Build order: 01, 02, 03, 04, 05, 08 (solver can produce a bundle) then 09, 10, 11, 13 (M1 app) then 06, 07, 12, 14 (online step, evaluation, M2). Hole order: 10, 11, 12.
+Build order: 01, 02, 03, 04, 05, 08 (solver can produce a bundle) then 09, 10, 11, 13 (M1 app) then 06, 07, 12, 14 (online step, evaluation, M2). Hole order: 10, 11, 12. Part 16 (approach benchmark) comes after 07 and before 14; part 15 (on-course learning) is reserved and not yet written.
 
 Repo: https://github.com/draygada/caddie (private). Python 3.12, Node 20. Handicap 15. Driver is always hit off a tee on the simulator; every other club off the mat.
 
