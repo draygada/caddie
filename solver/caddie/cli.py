@@ -1,6 +1,6 @@
 """Part 08: command line entry points (``python -m caddie <cmd>``).
 
-Commands: fit, hole, solve, recommend, evaluate, export, all.
+Commands: fit, hole, solve, recommend, evaluate, export, all, benchmark (part 16).
 
 Paths default to the solver directory layout (``data/raw``, ``data/holes``, ``out``)
 regardless of the current working directory. ``HOLE`` is 10, 11, 12 or ``toy``; the toy
@@ -320,6 +320,63 @@ def cmd_all(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_benchmark(args: argparse.Namespace) -> int:
+    """Part 16: every runnable case with the chosen approaches on the chosen simulators."""
+    from dataclasses import replace
+
+    from caddie.approaches import APPROACHES
+    from caddie.benchmark import (
+        CASES_PATH,
+        load_cases,
+        plot_strokes_vs_compute,
+        run_case,
+        run_sweeps,
+        write_case_table,
+        write_summary,
+    )
+
+    t0 = time.perf_counter()
+    ids = [c.strip() for c in args.cases.split(",") if c.strip()] if args.cases else None
+    approaches = [a.strip() for a in args.approaches.split(",") if a.strip()]
+    bad = [a for a in approaches if a not in APPROACHES]
+    if bad:
+        log.error("unknown approaches %s; choose from %s", bad, list(APPROACHES))
+        return 1
+    out = Path(args.out)
+    cases = load_cases(Path(args.cases_file) if args.cases_file else CASES_PATH, out, ids=ids)
+    if not cases:
+        log.error("no runnable case")
+        return 1
+    simulators = ("cell", "point") if args.simulator == "both" else (args.simulator,)
+    results = []
+    bench_dir = out / "benchmark"
+    for case in cases:
+        for sim in simulators:
+            c = case if sim == "cell" else replace(case, n=args.point_n)
+            if args.n is not None and sim == "cell":
+                c = replace(c, n=args.n)
+            result = run_case(c, approaches, seed=args.seed, simulator=sim)
+            results.append(result)
+            write_case_table(result, bench_dir)
+            ranked = sorted(result["approaches"], key=lambda k: result["approaches"][k]["regret"])
+            print(
+                f"{result['case']:22s} {sim:5s} best {ranked[0] if ranked else 'none':8s} "
+                f"pass {len(result['passed'])} fail {len(result['failed'])} "
+                f"not checked {len(result['skipped'])}"
+            )
+    sweeps = None
+    if not args.no_sweeps:
+        sweep_case = next((c for c in cases if c.id == args.sweep_case), cases[0])
+        log.info("sweeps on %s", sweep_case.id)
+        sweeps = run_sweeps(sweep_case, seed=args.seed, point_n=args.point_n)
+    summary = write_summary(results, bench_dir)
+    figure = plot_strokes_vs_compute(results, bench_dir, sweeps)
+    print(f"summary: {summary}")
+    print(f"figure: {figure}")
+    log.info("benchmark took %.1f s", time.perf_counter() - t0)
+    return 0
+
+
 # --- parser ---------------------------------------------------------------------------------
 
 
@@ -407,6 +464,25 @@ def build_parser() -> argparse.ArgumentParser:
         "--player", type=Path, default=None, help="player.json to use when shots.csv has no rows"
     )
     s.set_defaults(func=cmd_all)
+
+    s = sub.add_parser(
+        "benchmark", parents=[common], help="compare the approaches on the fixture cases (part 16)"
+    )
+    s.add_argument("--cases", default=None, help="comma-separated case ids; default every case")
+    s.add_argument("--cases-file", type=Path, default=None, help="another cases JSON")
+    s.add_argument(
+        "--approaches",
+        default=",".join(("grid", "rollout", "pin", "centre", "greedy", "risk", "sparse2", "mcts")),
+    )
+    s.add_argument("--n", type=int, default=None, help="plays per approach on the cell simulator")
+    s.add_argument(
+        "--point-n", type=int, default=100, help="plays per approach on the point simulator"
+    )
+    s.add_argument("--simulator", choices=("cell", "point", "both"), default="both")
+    s.add_argument("--seed", type=int, default=0)
+    s.add_argument("--sweep-case", default="toy-drop", help="case for the lambda and MCTS sweeps")
+    s.add_argument("--no-sweeps", action="store_true")
+    s.set_defaults(func=cmd_benchmark)
     return p
 
 

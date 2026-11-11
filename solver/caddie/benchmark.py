@@ -608,3 +608,273 @@ def _check_one(case: Case, e: dict, metrics: dict, decisions: dict, result: dict
                 ok &= cmp(d["dir_deg"], value)
         return bool(ok), {who: d}
     raise ValueError(f"unknown expectation kind {kind!r}")
+
+
+# --- slice 8: report ------------------------------------------------------------------------------
+
+FOLLOW_UPS = {
+    "cem": "cross-entropy rule (extensions item 9)",
+    "goal": "goal objective, maximise P(score <= par)",
+}
+TABLE_COLUMNS = (
+    "approach",
+    "mean_strokes",
+    "std_strokes",
+    "se_vs_grid",
+    "p_blowup",
+    "regret",
+    "disagreement",
+    "build_s",
+    "decide_s",
+    "decide_ms_per_shot",
+)
+
+
+def _ranked(approaches: dict) -> list[str]:
+    return sorted(approaches, key=lambda k: (approaches[k]["regret"], approaches[k]["decide_s"]))
+
+
+def _fmt(v) -> str:
+    if isinstance(v, float):
+        return "nan" if not np.isfinite(v) else f"{v:.3f}"
+    return str(v)
+
+
+def write_case_table(result: dict, out_dir: Path) -> Path:
+    """``out/benchmark/<case>_<simulator>.md`` and ``.csv`` with the per-approach metrics,
+    the expectation outcomes, and the score histogram."""
+    import csv
+
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    label = f"{result['case']}_{result['simulator']}"
+    apps = result["approaches"]
+    order = _ranked(apps)
+    with (out_dir / f"{label}.csv").open("w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(TABLE_COLUMNS)
+        for name in order:
+            w.writerow([name] + [_fmt(apps[name][k]) for k in TABLE_COLUMNS[1:]])
+    sx, sy, slie = result["start"]
+    lines = [
+        f"# Case {result['case']}: hole {result['hole']}, {result['mode']} mode, "
+        f"par {result['par']}",
+        "",
+        f"{result['n']} plays per approach on the {result['simulator']} simulator from "
+        f"({sx:.1f}, {sy:.1f}) m on the {slie}, seed {result['seed']}, paired draws.",
+        "",
+        "| approach | mean strokes | sd | se vs grid | p(blow-up) | regret | disagreement "
+        "| build s | decide s | ms per shot |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    for name in order:
+        m = apps[name]
+        lines.append(
+            f"| {name} | {m['mean_strokes']:.2f} | {m['std_strokes']:.2f} "
+            f"| {_fmt(m['se_vs_grid'])} "
+            f"| {m['p_blowup']:.3f} | {m['regret']:.3f} | {_fmt(m['disagreement'])} "
+            f"| {m['build_s']:.1f} | {m['decide_s']:.1f} | {m['decide_ms_per_shot']:.2f} |"
+        )
+    if result["not_run"]:
+        lines += ["", "Not run here: " + ", ".join(result["not_run"]) + "."]
+    lines += ["", "## Expectations", ""]
+    for e_id in result["passed"]:
+        lines.append(f"- pass: {e_id}")
+    for f_ in result["failed"]:
+        measured = ", ".join(f"{k} {_fmt(v)}" for k, v in f_["measured"].items())
+        lines.append(f"- FAIL: {f_['id']} ({measured})")
+    for s_ in result["skipped"]:
+        lines.append(f"- not checked: {s_['id']} (missing {', '.join(s_['missing'])})")
+    if not result["passed"] and not result["failed"] and not result["skipped"]:
+        lines.append("- none")
+    scores = sorted({s for m in apps.values() for s in m["histogram"]})
+    lines += ["", "## Score histogram (whole strokes)", "", "| score | " + " | ".join(order) + " |"]
+    lines.append("| --- | " + " | ".join("---" for _ in order) + " |")
+    for s_ in scores:
+        lines.append(
+            f"| {s_} | " + " | ".join(str(apps[n]["histogram"].get(s_, 0)) for n in order) + " |"
+        )
+    lines += [
+        "",
+        "Regret: mean strokes minus the best approach's mean on this case. se vs grid: standard "
+        "error of the paired difference to grid. p(blow-up): share of plays at or above par + 3.",
+    ]
+    path = out_dir / f"{label}.md"
+    path.write_text("\n".join(lines) + "\n")
+    log.info("wrote %s", path)
+    return path
+
+
+def summarise(results: list[dict]) -> dict[str, dict]:
+    """Per approach across cases: wins, mean regret, mean p(blow-up), compute, expectations."""
+    names = sorted({n for r in results for n in r["approaches"]})
+    out: dict[str, dict] = {}
+    for name in names:
+        rows = [(r, r["approaches"][name]) for r in results if name in r["approaches"]]
+        regrets = np.array([m["regret"] for _, m in rows])
+        ses = np.array([m["se_vs_grid"] for _, m in rows])
+        ties = regrets <= np.where(np.isfinite(ses), ses, 0.0) + 1e-12
+        out[name] = {
+            "cases": len(rows),
+            "wins": int(ties.sum()),
+            "mean_regret": float(regrets.mean()),
+            "mean_p_blowup": float(np.mean([m["p_blowup"] for _, m in rows])),
+            "compute_s": float(sum(m["build_s"] + m["decide_s"] for _, m in rows)),
+            "passed": int(sum(len(m["passed"]) for _, m in rows)),
+            "failed": int(sum(len(m["failed"]) for _, m in rows)),
+        }
+    return out
+
+
+def write_summary(results: list[dict], out_dir: Path) -> Path:
+    """``out/benchmark/summary.md`` and ``.csv``: the ranking, then the case list, then the
+    follow-up approaches that were not run."""
+    import csv
+
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    summary = summarise(results)
+    order = sorted(summary, key=lambda k: (summary[k]["mean_regret"], summary[k]["compute_s"]))
+    cols = (
+        "approach",
+        "cases",
+        "wins",
+        "mean_regret",
+        "mean_p_blowup",
+        "compute_s",
+        "passed",
+        "failed",
+    )
+    with (out_dir / "summary.csv").open("w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(cols)
+        for name in order:
+            w.writerow([name] + [_fmt(summary[name][k]) for k in cols[1:]])
+    lines = [
+        "# Benchmark summary",
+        "",
+        f"{len(results)} case runs. Ranked by mean regret (strokes above the best approach on "
+        "each case), ties by compute. A win is a regret within one paired standard error of zero.",
+        "",
+        "| approach | cases | wins | mean regret | mean p(blow-up) | compute s "
+        "| expectations passed | failed |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    for name in order:
+        s = summary[name]
+        lines.append(
+            f"| {name} | {s['cases']} | {s['wins']} | {s['mean_regret']:.3f} "
+            f"| {s['mean_p_blowup']:.3f} | {s['compute_s']:.1f} | {s['passed']} | {s['failed']} |"
+        )
+    lines += [
+        "",
+        "## Cases",
+        "",
+        "| case | simulator | n | best | failed expectations |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    for r in results:
+        best = _ranked(r["approaches"])[0] if r["approaches"] else "none"
+        failed = ", ".join(f_["id"] for f_ in r["failed"]) or "none"
+        lines.append(f"| {r['case']} | {r['simulator']} | {r['n']} | {best} | {failed} |")
+    lines += ["", "## Not run", ""]
+    for name, what in FOLLOW_UPS.items():
+        lines.append(f"- {name}: {what}. Follow-up, not run.")
+    not_run = sorted({n for r in results for n in r["not_run"]})
+    if not_run:
+        lines.append(
+            "- " + ", ".join(not_run) + ": skipped on at least one case run (see its table)."
+        )
+    path = out_dir / "summary.md"
+    path.write_text("\n".join(lines) + "\n")
+    log.info("wrote %s", path)
+    return path
+
+
+def plot_strokes_vs_compute(results: list[dict], out_dir: Path, sweeps: dict | None = None) -> Path:
+    """One point per (approach, case run): compute per 1000 plays against regret, log x.
+    ``sweeps`` ({approach: [(label, compute_per_1000, regret), ...]}) draws connected lines."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    names = sorted({n for r in results for n in r["approaches"]})
+    fig, ax = plt.subplots(figsize=(7, 4.5))
+    for name in names:
+        xs, ys = [], []
+        for r in results:
+            m = r["approaches"].get(name)
+            if m is None:
+                continue
+            xs.append(max((m["build_s"] + m["decide_s"]) * 1000.0 / r["n"], 1e-3))
+            ys.append(m["regret"])
+        ax.scatter(xs, ys, label=name, s=28)
+    for name, pts in (sweeps or {}).items():
+        xs = [max(p[1], 1e-3) for p in pts]
+        ys = [p[2] for p in pts]
+        ax.plot(xs, ys, marker="o", ls="--", lw=0.9, label=f"{name} sweep")
+        for lbl, x, y in pts:
+            ax.annotate(
+                lbl, (max(x, 1e-3), y), fontsize=7, xytext=(3, 3), textcoords="offset points"
+            )
+    ax.set_xscale("log")
+    ax.set_xlabel("compute per 1000 plays (s, build + decide)")
+    ax.set_ylabel("regret (strokes above the best approach on the case)")
+    ax.set_title("Approaches: strokes against compute")
+    ax.legend(fontsize=8)
+    fig.tight_layout()
+    path = out_dir / "strokes_vs_compute.png"
+    fig.savefig(path, dpi=130)
+    plt.close(fig)
+    return path
+
+
+RISK_SWEEP = (0.1, 0.5, 1.0)
+MCTS_SWEEP = (100, 300, 1000)
+
+
+def run_sweeps(case: Case, seed: int = 0, point_n: int | None = None) -> dict:
+    """``risk`` over lambda and ``mcts`` over its budget on one case, for the compute figure.
+
+    Returns ``{approach: [(label, compute per 1000 plays, regret vs the best grid mean)]}``;
+    regret here is against the case's ``grid`` mean on the same simulator.
+    """
+    from dataclasses import replace
+
+    out: dict[str, list] = {"risk": [], "mcts": []}
+    base = run_case(case, ["grid"], seed=seed, check=False)
+    grid_mean = base["approaches"]["grid"]["mean_strokes"]
+    for lam in RISK_SWEEP:
+        r = run_case(case, ["risk"], seed=seed, check=False, settings={"risk": {"lam": lam}})
+        m = r["approaches"]["risk"]
+        out["risk"].append(
+            (
+                f"lam {lam}",
+                (m["build_s"] + m["decide_s"]) * 1000.0 / case.n,
+                m["mean_strokes"] - grid_mean,
+            )
+        )
+    pcase = replace(case, n=point_n or case.n)
+    pbase = run_case(pcase, ["grid"], seed=seed, simulator="point", check=False)
+    pgrid = pbase["approaches"]["grid"]["mean_strokes"]
+    for iters in MCTS_SWEEP:
+        r = run_case(
+            pcase,
+            ["mcts"],
+            seed=seed,
+            simulator="point",
+            check=False,
+            settings={"mcts": {"iters": iters}},
+        )
+        m = r["approaches"]["mcts"]
+        out["mcts"].append(
+            (
+                f"{iters} iters",
+                (m["build_s"] + m["decide_s"]) * 1000.0 / pcase.n,
+                m["mean_strokes"] - pgrid,
+            )
+        )
+    return out

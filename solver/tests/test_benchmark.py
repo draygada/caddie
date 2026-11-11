@@ -233,3 +233,67 @@ def test_run_case_on_the_point_simulator_covers_the_point_capable_approaches(toy
     assert result["not_run"] == ["pin"]
     assert result["approaches"]["rollout"]["decide_s"] > result["approaches"]["grid"]["decide_s"]
     assert np.isfinite(result["approaches"]["rollout"]["disagreement"])
+
+
+# --- slice 8: report and CLI ----------------------------------------------------------------------
+
+
+def test_report_tables_summary_and_figure(toy_case, tmp_path: Path):
+    from dataclasses import replace
+
+    from caddie.benchmark import (
+        FOLLOW_UPS,
+        plot_strokes_vs_compute,
+        run_case,
+        write_case_table,
+        write_summary,
+    )
+
+    case = replace(toy_case, n=300)
+    results = [run_case(case, ["grid", "pin", "centre", "greedy"], seed=0)]
+    out = tmp_path / "benchmark"
+    table = write_case_table(results[0], out)
+    assert table == out / "toy-drop_cell.md" and (out / "toy-drop_cell.csv").exists()
+    text = table.read_text()
+    assert "| grid |" in text and "regret" in text and "Expectations" in text
+    summary = write_summary(results, out)
+    assert summary == out / "summary.md" and (out / "summary.csv").exists()
+    text = summary.read_text()
+    rows = [
+        line for line in text.splitlines() if line.startswith("| grid") or line.startswith("| pin")
+    ]
+    assert rows[0].startswith("| grid")  # ranked by mean regret: grid first
+    for name in FOLLOW_UPS:
+        assert name in text and "not run" in text
+    fig = plot_strokes_vs_compute(results, out)
+    assert fig == out / "strokes_vs_compute.png" and fig.stat().st_size > 1000
+
+
+def test_cli_benchmark_runs_two_cases(tmp_path: Path):
+    from caddie.cli import main
+
+    code = main(
+        [
+            "benchmark",
+            "--cases",
+            "toy-drop,open-straight",
+            "--approaches",
+            "grid,pin,greedy",
+            "--n",
+            "200",
+            "--point-n",
+            "20",
+            "--simulator",
+            "both",
+            "--no-sweeps",
+            "--out",
+            str(tmp_path),
+        ]
+    )
+    assert code == 0
+    out = tmp_path / "benchmark"
+    assert (out / "summary.md").exists()
+    assert (out / "toy-drop_cell.md").exists() and (out / "open-straight_cell.md").exists()
+    assert (out / "toy-drop_point.md").exists()
+    assert (out / "strokes_vs_compute.png").exists()
+    assert (out / "solutions" / "open_straight_drop.npz").exists()
