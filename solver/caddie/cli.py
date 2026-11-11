@@ -1,7 +1,6 @@
 """Part 08: command line entry points (``python -m caddie <cmd>``).
 
-Commands: fit, hole, solve, recommend, evaluate, export, all. ``recommend`` and
-``evaluate`` belong to parts 06 and 07 and report that until those parts exist.
+Commands: fit, hole, solve, recommend, evaluate, export, all.
 
 Paths default to the solver directory layout (``data/raw``, ``data/holes``, ``out``)
 regardless of the current working directory. ``HOLE`` is 10, 11, 12 or ``toy``; the toy
@@ -20,6 +19,15 @@ from pathlib import Path
 import numpy as np
 
 from caddie.dispersion import Player, build_player
+from caddie.evaluate import (
+    bootstrap_fit,
+    evaluate_hole,
+    plot_disagreement_map,
+    plot_heatmap_with_policy,
+    plot_histograms,
+    robustness,
+    write_report_tables,
+)
 from caddie.export import (
     BUNDLE_FILES,
     bundle_dir,
@@ -235,12 +243,40 @@ def cmd_recommend(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_not_yet(part: str):
-    def run(args: argparse.Namespace) -> int:
-        log.error("`%s` is implemented in part %s, which does not exist yet", args.cmd, part)
+def cmd_evaluate(args: argparse.Namespace) -> int:
+    player = load_player(args.hole, args.player)
+    if player is None:
         return 1
-
-    return run
+    loaded = load_solution(args)
+    if loaded is None:
+        return 1
+    solution, hole = loaded
+    t0 = time.perf_counter()
+    results = evaluate_hole(hole, player, solution, args.mode, n=args.n, seed=args.seed)
+    if args.boot > 0 and args.hole != TOY and has_shot_rows(Path(args.shots)):
+        players = bootstrap_fit(Path(args.shots), n_boot=args.boot, seed=args.seed)
+        results["robustness"] = robustness(hole, players, args.mode, reference=solution, K=args.K)
+    elif args.boot > 0:
+        log.warning("no shot rows in %s: skipping the bootstrap robustness check", args.shots)
+    out = Path(args.out)
+    write_report_tables(results, out / "tables")
+    figures = out / "figures"
+    paths = [
+        plot_histograms(results, figures),
+        plot_heatmap_with_policy(solution, hole, figures),
+        plot_disagreement_map(solution, hole, player, figures),
+    ]
+    label = f"{args.hole}_{args.mode}"
+    for m_name, m in results["policies"].items():
+        print(
+            f"{m_name:8s} mean {m['mean_strokes']:.2f} sd {m['std_strokes']:.2f} "
+            f"blowup {m['p_blowup']:.3f} disagreement {m['disagreement']:.3f}"
+        )
+    print(f"tables: {out / 'tables' / (label + '.md')}")
+    for path in paths:
+        print(f"figure: {path}")
+    log.info("evaluate took %.1f s", time.perf_counter() - t0)
+    return 0
 
 
 def has_shot_rows(path: Path) -> bool:
@@ -340,12 +376,17 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--seed", type=int, default=0)
     s.set_defaults(func=cmd_recommend)
 
-    s = sub.add_parser("evaluate", parents=[common], help="part 07")
+    s = sub.add_parser(
+        "evaluate", parents=[common, fit_opts], help="policy metrics, robustness, figures"
+    )
     s.add_argument("hole", choices=(*REAL_HOLES, TOY))
     s.add_argument("--mode", choices=PENALTY_MODES, required=True)
-    s.add_argument("--n", type=int, default=2000)
-    s.add_argument("--boot", type=int, default=50)
-    s.set_defaults(func=cmd_not_yet("07"))
+    s.add_argument("--n", type=int, default=2000, help="simulated plays per policy")
+    s.add_argument("--boot", type=int, default=50, help="bootstrap refits; 0 to skip")
+    s.add_argument("--player", type=Path, default=DEFAULT_OUT / "player.json")
+    s.add_argument("--K", type=int, default=200, help="draws per bootstrap solve")
+    s.add_argument("--seed", type=int, default=0)
+    s.set_defaults(func=cmd_evaluate)
 
     s = sub.add_parser(
         "export", parents=[common, hole_io, solve_opts, app_opts], help="bundle for the app"
