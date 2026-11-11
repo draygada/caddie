@@ -23,6 +23,7 @@ import { PlayItOutLayer } from './PlayItOut'
 
 import { gridCorners, gridToLonLat } from '../lib/geo'
 import { heatmapDataUrl } from '../lib/heatmap'
+import { whenStyleReady } from '../lib/mapReady'
 import type { HoleBundle, Meta, XY } from '../lib/types'
 
 export const ESRI_TILES =
@@ -200,8 +201,7 @@ export function HoleMap({ bundle, tee }: HoleMapProps) {
       }
       fitToGrid(map, bundle.meta)
     }
-    if (map.isStyleLoaded()) apply()
-    else map.once('load', apply)
+    return whenStyleReady(map, apply)
   }, [bundle])
 
   // Pin and the selected tee.
@@ -213,8 +213,7 @@ export function HoleMap({ bundle, tee }: HoleMapProps) {
       const marks = map.getSource('marks') as GeoJSONSource | undefined
       marks?.setData(markerFeatures(bundle.meta, tee))
     }
-    if (map.isStyleLoaded()) apply()
-    else map.once('load', apply)
+    return whenStyleReady(map, apply)
   }, [bundle, tee])
 
   return (

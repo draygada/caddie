@@ -8,6 +8,7 @@ import { useEffect } from 'react'
 
 import { gridToLonLat } from '../lib/geo'
 import { lieAt } from '../lib/grid'
+import { whenStyleReady } from '../lib/mapReady'
 import type { Lie, LieName, Meta, Player, XY } from '../lib/types'
 import { useStore } from '../store'
 
@@ -129,8 +130,7 @@ export function AimArrow({ map }: { map: MLMap }) {
         paint: { 'line-color': ARROW_COLOUR, 'line-width': 2.5 },
       })
     }
-    if (map.isStyleLoaded()) apply()
-    else map.once('load', apply)
+    return whenStyleReady(map, apply)
   }, [map, bundle, player, ball, lieOverride, recommendation])
 
   return null
