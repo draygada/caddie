@@ -116,8 +116,12 @@ def simulate(
     mode: PenaltyMode,
     n: int,
     seed: int,
+    start: tuple[float, float, Lie] | None = None,
 ) -> np.ndarray:
     """Strokes to hole out for ``n`` plays from the Black tee under ``policy``.
+
+    ``start`` (part 16) plays from another point instead: its cell, with the given lie
+    for the first shot. The default is the Black tee with its own lie, unchanged.
 
     Cell-to-cell play with :func:`caddie.mdp.step_batch` on ``SIM_DRAWS`` Halton draws
     built from ``seed``; each play picks one draw column per shot from a generator also
@@ -129,8 +133,14 @@ def simulate(
     draws = make_draws(SIM_DRAWS, seed)
     tables = build_offset_tables(player, draws)
     flat = hole.lie.reshape(-1)
-    tee = _cell_index(hole, *hole.tee_xy)
-    idx = np.full(n, tee, dtype=np.int64)
+    if start is None:
+        origin = _cell_index(hole, *hole.tee_xy)
+        first_lie = int(flat[origin])
+    else:
+        origin = _cell_index(hole, start[0], start[1])
+        first_lie = int(start[2])
+    idx = np.full(n, origin, dtype=np.int64)
+    cur_lie = np.full(n, first_lie, dtype=np.int64)
     strokes = np.zeros(n)
     active = np.ones(n, dtype=bool)
     terminal = terminal_values(hole, player.putting)  # -E[putts] on green, NaN elsewhere
@@ -141,7 +151,7 @@ def simulate(
             break
         alive = np.flatnonzero(active)
         cells = idx[alive]
-        lies = flat[cells]
+        lies = cur_lie[alive]
         actions = np.empty((alive.size, 2), dtype=np.int64)
         for k, cell in enumerate(cells):
             r, c = divmod(int(cell), hole.cols)
@@ -156,6 +166,7 @@ def simulate(
             col = columns[shot, plays]
             rows = np.arange(group.size)
             idx[plays] = nxt[rows, col]
+            cur_lie[plays] = flat[idx[plays]]
             strokes[plays] += -reward[rows, col]
         landed_green = active & (flat[idx] == int(Lie.GREEN))
         strokes[landed_green] += -terminal[idx[landed_green]]

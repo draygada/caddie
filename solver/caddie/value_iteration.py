@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
+from scipy.special import logsumexp
 
 from caddie.dispersion import Player
 from caddie.geometry import Hole
@@ -36,6 +37,25 @@ from caddie.mdp import (
 log = logging.getLogger(__name__)
 
 NO_ACTION = 255
+Objective = str | tuple[str, float]
+"""``"strokes"`` (expected strokes, the default) or ``("exp", lam)``: exponential utility
+``-exp(lam x strokes)`` (part 16). Under ``("exp", lam)`` the backup is the certainty
+equivalent ``-(1/lam) log E[exp(-lam (r + U(next)))]``, which tends to the expectation as
+``lam -> 0``; ``U`` then holds certainty-equivalent strokes, not expected strokes.
+"""
+
+
+def _lam(objective: Objective) -> float | None:
+    if objective == "strokes":
+        return None
+    if isinstance(objective, tuple) and len(objective) == 2 and objective[0] == "exp":
+        lam = float(objective[1])
+        if lam <= 0:
+            raise ValueError("exponential utility needs lam > 0")
+        return lam
+    raise ValueError(f"unknown objective {objective!r}")
+
+
 LIE_PLOT = {"water": int(Lie.WATER), "ob": int(Lie.OB), "bunker": int(Lie.BUNKER)}
 PLAYABLE_LIES = (Lie.TEE, Lie.FAIRWAY, Lie.ROUGH, Lie.BUNKER)
 
@@ -101,6 +121,7 @@ def bellman_backup(
     tables: OffsetTables,
     mode: PenaltyMode,
     candidates: np.ndarray,
+    objective: Objective = "strokes",
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """One synchronous sweep over every playable cell.
 
@@ -116,11 +137,16 @@ def bellman_backup(
     best_dir = np.full(U.shape, NO_ACTION, dtype=np.uint8)
     bc = np.zeros(cells.shape, dtype=np.uint8)
     bd = np.zeros(cells.shape, dtype=np.uint8)
+    lam = _lam(objective)
     for club_idx, dir_idx in candidates:
         nxt, r = step_batch(
             hole, player, cells, from_lie, int(club_idx), int(dir_idx), tables, mode
         )
-        q = (r + U[nxt]).mean(axis=1)
+        total = r + U[nxt]
+        if lam is None:
+            q = total.mean(axis=1)
+        else:
+            q = -(logsumexp(-lam * total, axis=1) - np.log(total.shape[1])) / lam
         better = q > best_q
         best_q = np.where(better, q, best_q)
         bc[better] = club_idx
@@ -143,8 +169,14 @@ def solve(
     max_sweeps: int = 100,
     seed: int = 0,
     log_every: int = 5,
+    objective: Objective = "strokes",
 ) -> Solution:
-    """Value iteration to residual < ``tol``; returns strokes-to-go and the greedy policy."""
+    """Value iteration to residual < ``tol``; returns strokes-to-go and the greedy policy.
+
+    ``objective`` other than ``"strokes"`` is part 16's risk-sensitive variant; see
+    :data:`Objective`.
+    """
+    _lam(objective)  # validate up front
     draws = make_draws(K, seed)
     tables = build_offset_tables(player, draws)
     candidates = all_actions(player)
@@ -156,7 +188,9 @@ def solve(
     sweeps = 0
     for sweeps in range(1, max_sweeps + 1):
         t0 = time.perf_counter()
-        U_new, club, direction = bellman_backup(U, hole, player, tables, mode, candidates)
+        U_new, club, direction = bellman_backup(
+            U, hole, player, tables, mode, candidates, objective
+        )
         residual = float(np.max(np.abs(U_new[playable] - U[playable])))
         history.append(residual)
         U = U_new

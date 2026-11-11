@@ -1,0 +1,154 @@
+"""Synthetic holes and the round-number player for part 16 (docs/parts/16-benchmark.md).
+
+Every hole is 70 rows x 24 cols of 5 m (350 x 120 m): a 60 m fairway down the middle
+(columns 6 to 17) with 30 m rough shoulders either side, tee at (60, 2.5), a round green
+of radius 12.5 m centred at y = 330 whose centroid is the pin, par 4. Off the grid is OB,
+as on the real holes, so the shoulders keep a 6 degree driver on the hole. The builders
+differ only in the hazards they add. Numbers here are benchmark settings, not the fitted player.
+"""
+
+from __future__ import annotations
+
+import numpy as np
+
+from caddie.dispersion import ClubParams, Player
+from caddie.geometry import Hole, compute_drop_index
+from caddie.mdp import Lie
+from caddie.putting import PuttingTable
+
+ROWS, COLS, CELL_M = 70, 24, 5.0
+FAIRWAY_COLS = slice(6, 18)
+TEE_XY = (60.0, 2.5)
+GREEN_CENTRE = (60.0, 330.0)
+GREEN_RADIUS_M = 12.5
+PAR = 4
+
+# the root data contract's lie multipliers and putting table
+LIE_MULT = {
+    "tee": {"carry": 1.0, "sigma": 1.0, "roll": 1.0},
+    "fairway": {"carry": 1.0, "sigma": 1.0, "roll": 1.0},
+    "rough": {"carry": 0.9, "sigma": 1.3, "roll": 0.5},
+    "bunker": {"carry": 0.8, "sigma": 1.6, "roll": 0.0},
+}
+PUTTING_DISTANCE_M = [1, 2, 3, 4, 6, 8, 10, 15, 25]
+PUTTING_EXPECTED = [1.07, 1.41, 1.64, 1.78, 1.85, 1.93, 1.98, 2.15, 2.4]
+
+
+def _cell_centres() -> tuple[np.ndarray, np.ndarray]:
+    cx = (np.arange(COLS) + 0.5) * CELL_M
+    cy = (np.arange(ROWS) + 0.5) * CELL_M
+    return np.meshgrid(cx, cy)
+
+
+def _finish(lie: np.ndarray, number: int) -> Hole:
+    xx, yy = _cell_centres()
+    green = np.hypot(xx - GREEN_CENTRE[0], yy - GREEN_CENTRE[1]) <= GREEN_RADIUS_M
+    lie[green] = int(Lie.GREEN)
+    pin_xy = (float(xx[green].mean()), float(yy[green].mean()))
+    return Hole(
+        number=number,
+        par=PAR,
+        cell_m=CELL_M,
+        rows=ROWS,
+        cols=COLS,
+        origin_lat=0.0,
+        origin_lon=0.0,
+        rotation_deg=0.0,
+        tee_xy=TEE_XY,
+        tees={"black": TEE_XY},
+        pin_xy=pin_xy,
+        lie=lie,
+        drop_index=compute_drop_index(lie, TEE_XY, CELL_M),
+    )
+
+
+def _base() -> np.ndarray:
+    lie = np.full((ROWS, COLS), int(Lie.ROUGH), dtype=np.uint8)
+    lie[:, FAIRWAY_COLS] = int(Lie.FAIRWAY)
+    return lie
+
+
+def open_straight() -> Hole:
+    """Fairway down the middle, rough shoulders, no hazard: the control."""
+    return _finish(_base(), number=901)
+
+
+def water_carry(water_from_m: float = 180.0, water_to_m: float = 200.0) -> Hole:
+    """``open_straight`` plus a water band across the full width between the two y values."""
+    lie = _base()
+    _, yy = _cell_centres()
+    lie[(yy >= water_from_m) & (yy <= water_to_m)] = int(Lie.WATER)
+    return _finish(lie, number=902)
+
+
+def ob_side() -> Hole:
+    """The left shoulder is OB instead of rough: OB on columns 0 to 5, 30 m left of the tee
+    line, fairway 6 to 17, rough 18 to 23."""
+    lie = _base()
+    lie[:, 0:6] = int(Lie.OB)
+    return _finish(lie, number=903)
+
+
+BUNKER_FRONT_ROW = 63
+BUNKER_FRONT_COLS = (11, 12, 13)
+
+
+def bunker_front() -> Hole:
+    """``open_straight`` plus bunkers in the three cells directly short of the green."""
+    lie = _base()
+    for c in BUNKER_FRONT_COLS:
+        lie[BUNKER_FRONT_ROW, c] = int(Lie.BUNKER)
+    return _finish(lie, number=904)
+
+
+HOLE_BUILDERS = {
+    "open_straight": open_straight,
+    "water_carry": water_carry,
+    "ob_side": ob_side,
+    "bunker_front": bunker_front,
+}
+
+
+def round_numbers(driver_mu_c: float = 200.0) -> Player:
+    """A nine-club bag with regular gaps down to a 20 m chip, round numbers, contract lie
+    multipliers and putting. A coarser bag produced artefacts the real bag does not have: a
+    non-monotone value grid where no club fit the distance, and baselines that could not
+    finish on a 12.5 m green."""
+
+    def club(mu_c, sigma_theta_deg, sigma_d, p, mu_r, sigma_r) -> ClubParams:
+        return ClubParams(
+            mu_c=mu_c,
+            sigma_theta_deg=sigma_theta_deg,
+            sigma_d=sigma_d,
+            p=p,
+            mu_r=mu_r,
+            sigma_r=sigma_r,
+            sampled=True,
+            stats=None,
+        )
+
+    clubs = {
+        "driver": club(driver_mu_c, 6.0, 0.07, 0.10, 15.0, 8.0),
+        "5h": club(170.0, 5.0, 0.06, 0.08, 10.0, 5.0),
+        "7i": club(140.0, 4.0, 0.05, 0.05, 5.0, 3.0),
+        "9i": club(120.0, 3.5, 0.05, 0.05, 3.0, 2.0),
+        "pw": club(100.0, 3.5, 0.05, 0.05, 2.0, 1.0),
+        "sw80": club(80.0, 3.5, 0.06, 0.05, 1.5, 1.0),
+        "sw60": club(60.0, 3.5, 0.06, 0.05, 1.0, 1.0),
+        "sw40": club(40.0, 3.5, 0.06, 0.05, 0.5, 0.5),
+        "sw20": club(20.0, 3.5, 0.06, 0.05, 0.5, 0.5),
+    }
+    putting = PuttingTable(
+        distance_m=np.asarray(PUTTING_DISTANCE_M, dtype=float),
+        expected_putts=np.asarray(PUTTING_EXPECTED, dtype=float),
+    )
+    return Player(
+        handicap=15,
+        clubs=clubs,
+        club_order=list(clubs),
+        lie={k: dict(v) for k, v in LIE_MULT.items()},
+        putting=putting,
+    )
+
+
+PLAYER_BUILDERS = {"round_numbers": round_numbers}
