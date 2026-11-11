@@ -1,0 +1,146 @@
+[
+  {
+    "id": "toy-drop",
+    "hole": {"builder": "toy"},
+    "player": {"builder": "toy"},
+    "mode": "drop",
+    "n": 2000,
+    "expect": [
+      {"id": "grid-matches-tee-value", "kind": "band", "approach": "grid", "around": "tee_value", "within": 0.1},
+      {"id": "grid-beats-pin", "kind": "order", "lower": "grid", "upper": "pin"},
+      {"id": "grid-beats-centre", "kind": "order", "lower": "grid", "upper": "centre"},
+      {"id": "rollout-close-to-grid", "kind": "close", "a": "rollout", "b": "grid", "within": 0.05}
+    ]
+  },
+  {
+    "id": "toy-replay",
+    "hole": {"builder": "toy"},
+    "player": {"builder": "toy"},
+    "mode": "replay",
+    "n": 2000,
+    "expect": [
+      {"id": "grid-under-brute-force", "kind": "band", "approach": "grid", "hi": "brute_force_plus_0.05"},
+      {"id": "grid-beats-pin", "kind": "order", "lower": "grid", "upper": "pin"}
+    ]
+  },
+  {
+    "id": "open-straight",
+    "hole": {"builder": "open_straight"},
+    "player": {"builder": "three_club"},
+    "mode": "drop",
+    "n": 2000,
+    "expect": [
+      {"id": "all-close-to-grid", "kind": "close", "a": "*", "b": "grid", "within": 0.3},
+      {"id": "all-hit-driver", "kind": "action", "approach": "*", "at": "start", "club": "driver"}
+    ]
+  },
+  {
+    "id": "water-carry-weak",
+    "hole": {"builder": "water_carry", "args": {"water_from_m": 180, "water_to_m": 200}},
+    "player": {"builder": "three_club", "args": {"driver_mu_c": 190}},
+    "mode": "drop",
+    "n": 2000,
+    "expect": [
+      {"id": "grid-lays-up", "kind": "action", "approach": "grid", "at": "start", "club_not": "driver"},
+      {"id": "pin-goes-for-it", "kind": "action", "approach": "pin", "at": "start", "club": "driver"},
+      {"id": "grid-beats-pin-by-0.3", "kind": "order", "lower": "grid", "upper": "pin", "by_at_least": 0.3},
+      {"id": "grid-beats-centre", "kind": "order", "lower": "grid", "upper": "centre"},
+      {"id": "rollout-close-to-grid", "kind": "close", "a": "rollout", "b": "grid", "within": 0.05},
+      {"id": "risk-fewer-blowups", "kind": "blowup_order", "lower": "risk", "upper": "grid"}
+    ]
+  },
+  {
+    "id": "water-carry-strong",
+    "hole": {"builder": "water_carry", "args": {"water_from_m": 180, "water_to_m": 200}},
+    "player": {"builder": "three_club", "args": {"driver_mu_c": 230}},
+    "mode": "drop",
+    "n": 2000,
+    "expect": [
+      {"id": "grid-goes-for-it", "kind": "action", "approach": "grid", "at": "start", "club": "driver"},
+      {"id": "grid-close-to-pin", "kind": "close", "a": "grid", "b": "pin", "within": 0.1},
+      {"id": "risk-fewer-blowups", "kind": "blowup_order", "lower": "risk", "upper": "grid"}
+    ]
+  },
+  {
+    "id": "ob-left",
+    "hole": {"builder": "ob_side"},
+    "player": {"builder": "three_club"},
+    "mode": "drop",
+    "n": 2000,
+    "expect": [
+      {"id": "grid-aims-right", "kind": "action", "approach": "grid", "at": "start", "dir_deg_min": 4},
+      {"id": "grid-beats-pin-by-0.2", "kind": "order", "lower": "grid", "upper": "pin", "by_at_least": 0.2},
+      {"id": "risk-aims-at-least-as-right", "kind": "action", "approach": "risk", "at": "start", "dir_deg_min": "grid"}
+    ]
+  },
+  {
+    "id": "bunker-front",
+    "hole": {"builder": "bunker_front"},
+    "player": {"builder": "three_club"},
+    "start": {"short_of_pin_m": 120, "lie": "fairway"},
+    "mode": "drop",
+    "n": 2000,
+    "expect": [
+      {"id": "grid-beats-pin", "kind": "order", "lower": "grid", "upper": "pin"},
+      {"id": "greedy-close-to-grid", "kind": "close", "a": "greedy", "b": "grid", "within": 0.2}
+    ]
+  },
+  {
+    "id": "hole-11-drop-tee",
+    "hole": {"number": 11},
+    "player": {"builder": "file"},
+    "mode": "drop",
+    "n": 2000,
+    "expect": [
+      {"id": "grid-beats-pin-by-0.3", "kind": "order", "lower": "grid", "upper": "pin", "by_at_least": 0.3},
+      {"id": "grid-beats-centre-by-0.2", "kind": "order", "lower": "grid", "upper": "centre", "by_at_least": 0.2},
+      {"id": "rollout-close-to-grid", "kind": "close", "a": "rollout", "b": "grid", "within": 0.05},
+      {"id": "risk-fewer-blowups", "kind": "blowup_order", "lower": "risk", "upper": "grid"}
+    ]
+  },
+  {
+    "id": "hole-11-drop-150",
+    "hole": {"number": 11},
+    "player": {"builder": "file"},
+    "start": {"short_of_pin_m": 137, "lie": "fairway"},
+    "mode": "drop",
+    "n": 2000,
+    "expect": [
+      {"id": "grid-beats-pin", "kind": "order", "lower": "grid", "upper": "pin"},
+      {"id": "sparse2-close-to-grid", "kind": "close", "a": "sparse2", "b": "grid", "within": 0.1}
+    ]
+  },
+  {
+    "id": "hole-11-replay-tee",
+    "hole": {"number": 11},
+    "player": {"builder": "file"},
+    "mode": "replay",
+    "n": 2000,
+    "expect": [
+      {"id": "grid-beats-pin", "kind": "order", "lower": "grid", "upper": "pin"},
+      {"id": "risk-fewer-blowups", "kind": "blowup_order", "lower": "risk", "upper": "grid"}
+    ]
+  },
+  {
+    "id": "hole-10-drop-tee",
+    "hole": {"number": 10},
+    "player": {"builder": "file"},
+    "mode": "drop",
+    "n": 2000,
+    "expect": [
+      {"id": "grid-beats-pin", "kind": "order", "lower": "grid", "upper": "pin"},
+      {"id": "grid-beats-centre", "kind": "order", "lower": "grid", "upper": "centre"}
+    ]
+  },
+  {
+    "id": "hole-12-drop-tee",
+    "hole": {"number": 12},
+    "player": {"builder": "file"},
+    "mode": "drop",
+    "n": 2000,
+    "skip_unless_solved": true,
+    "expect": [
+      {"id": "grid-beats-pin", "kind": "order", "lower": "grid", "upper": "pin"}
+    ]
+  }
+]
