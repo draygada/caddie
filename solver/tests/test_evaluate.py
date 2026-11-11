@@ -15,8 +15,12 @@ from caddie.evaluate import (
     evaluate_hole,
     optimal_policy,
     pin_policy,
+    plot_disagreement_map,
+    plot_heatmap_with_policy,
+    plot_histograms,
     robustness,
     simulate,
+    write_report_tables,
 )
 from caddie.mdp import DIRECTIONS_DEG, Lie
 from caddie.value_iteration import solve
@@ -210,3 +214,33 @@ def test_robustness_percentiles_bracket_the_point_estimate(toy_drop):
     assert rob["tee_value_p05"] <= rob["tee_value_mean"] <= rob["tee_value_p95"]
     assert len(rob["disagreement"]) == 5
     assert all(0.0 <= d <= 1.0 for d in rob["disagreement"])
+
+
+# --- slice 6: tables and figures -----------------------------------------------------------------
+
+
+def test_report_tables_and_figures_are_written(toy_drop, tmp_path):
+    solution, hole, player = toy_drop
+    results = evaluate_hole(hole, player, solution, "drop", n=500, seed=0)
+    results["robustness"] = robustness(
+        hole, _jittered_players(player, 3, seed=1), "drop", reference=solution, max_sweeps=50
+    )
+    write_report_tables(results, tmp_path / "tables")
+    md = tmp_path / "tables" / "0_drop.md"
+    csv_path = tmp_path / "tables" / "0_drop.csv"
+    assert md.exists() and csv_path.exists()
+    text = md.read_text()
+    assert "| optimal |" in text and "| pin |" in text and "| centre |" in text
+    assert "extrapolation" in text
+    assert "p05" in text or "5th" in text
+    lines = csv_path.read_text().splitlines()
+    assert lines[0].split(",")[:3] == ["policy", "mean_strokes", "std_strokes"]
+    assert len(lines) == 4
+
+    figs = tmp_path / "figures"
+    plot_histograms(results, figs)
+    plot_heatmap_with_policy(solution, hole, figs)
+    plot_disagreement_map(solution, hole, player, figs)
+    for name in ("0_drop_histograms.png", "0_drop_heatmap_policy.png", "0_drop_disagreement.png"):
+        path = figs / name
+        assert path.exists() and path.stat().st_size > 5_000, name

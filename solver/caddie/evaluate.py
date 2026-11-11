@@ -28,7 +28,7 @@ from caddie.mdp import (
     terminal_values,
 )
 from caddie.putting import build_putting_table
-from caddie.value_iteration import NO_ACTION, Solution, solve
+from caddie.value_iteration import NO_ACTION, Solution, solve, write_value_png
 
 log = logging.getLogger(__name__)
 
@@ -350,3 +350,161 @@ def robustness(
         "disagreement": disagree,
         "reference_tee_value": float(ref.U[tee]),
     }
+
+
+# --- slice 6: tables and figures -----------------------------------------------------------------
+
+TABLE_COLUMNS = (
+    "policy",
+    "mean_strokes",
+    "std_strokes",
+    "p_blowup",
+    "disagreement",
+    "strokes_saved_per_round",
+)
+
+
+def _label(results: dict) -> str:
+    return f"{results['hole']}_{results['mode']}"
+
+
+def write_report_tables(results: dict, out_dir: Path) -> None:
+    """``<hole>_<mode>.csv`` and ``.md`` with the three policies' metrics and, when present,
+    the robustness summary."""
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    label = _label(results)
+    pols = results["policies"]
+    with (out_dir / f"{label}.csv").open("w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(TABLE_COLUMNS)
+        for name, m in pols.items():
+            writer.writerow([name] + [f"{m[k]:.4f}" for k in TABLE_COLUMNS[1:]])
+    lines = [
+        f"# Hole {results['hole']}, {results['mode']} mode, par {results['par']}",
+        "",
+        f"{results['n']} simulated plays per policy from the Black tee, seed {results['seed']}, "
+        "paired draws.",
+        "",
+        "| policy | mean strokes | sd | p(blow-up) | disagreement | strokes saved per round |",
+        "| --- | --- | --- | --- | --- | --- |",
+    ]
+    for name, m in pols.items():
+        lines.append(
+            f"| {name} | {m['mean_strokes']:.2f} | {m['std_strokes']:.2f} | {m['p_blowup']:.3f} "
+            f"| {m['disagreement']:.3f} | {m['strokes_saved_per_round']:.2f} |"
+        )
+    lines += [
+        "",
+        f"p(blow-up): share of plays at or above par + {BLOWUP_OVER_PAR}. Disagreement: share "
+        "of playable cells where the policy differs from the optimal one. Strokes saved per "
+        f"round: {results['strokes_saved_label']}.",
+        "",
+        "## Score histograms (scores rounded to whole strokes)",
+        "",
+    ]
+    scores = sorted({s for m in pols.values() for s in m["histogram"]})
+    lines.append("| score | " + " | ".join(pols) + " |")
+    lines.append("| --- | " + " | ".join("---" for _ in pols) + " |")
+    for s in scores:
+        lines.append(
+            f"| {s} | " + " | ".join(str(m["histogram"].get(s, 0)) for m in pols.values()) + " |"
+        )
+    rob = results.get("robustness")
+    if rob:
+        lines += [
+            "",
+            f"## Robustness to the fit ({rob['n_boot']} bootstraps)",
+            "",
+            "| tee value (point) | mean | p05 | p95 | mean policy disagreement |",
+            "| --- | --- | --- | --- | --- |",
+            f"| {rob['reference_tee_value']:.2f} | {rob['tee_value_mean']:.2f} | "
+            f"{rob['tee_value_p05']:.2f} | {rob['tee_value_p95']:.2f} | "
+            f"{float(np.mean(rob['disagreement'])):.3f} |",
+        ]
+    (out_dir / f"{label}.md").write_text("\n".join(lines) + "\n")
+    log.info("wrote %s", out_dir / f"{label}.md")
+
+
+def _plt():
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    return plt
+
+
+def plot_histograms(results: dict, out_dir: Path) -> Path:
+    """The three policies' score histograms on one axis."""
+    plt = _plt()
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    pols = results["policies"]
+    scores = sorted({s for m in pols.values() for s in m["histogram"]})
+    width = 0.8 / len(pols)
+    fig, ax = plt.subplots(figsize=(7, 4))
+    for k, (name, m) in enumerate(pols.items()):
+        counts = [m["histogram"].get(s, 0) / results["n"] for s in scores]
+        ax.bar(
+            [s + (k - (len(pols) - 1) / 2) * width for s in scores],
+            counts,
+            width=width,
+            label=f"{name} (mean {m['mean_strokes']:.2f})",
+        )
+    ax.axvline(results["par"], color="k", lw=0.8, ls="--", label=f"par {results['par']}")
+    ax.set_xlabel("strokes to hole out")
+    ax.set_ylabel("share of plays")
+    ax.set_title(f"Hole {results['hole']}, {results['mode']} mode: {results['n']} plays per policy")
+    ax.legend()
+    path = out_dir / f"{_label(results)}_histograms.png"
+    fig.tight_layout()
+    fig.savefig(path, dpi=130)
+    plt.close(fig)
+    return path
+
+
+def plot_heatmap_with_policy(solution: Solution, hole: Hole, out_dir: Path) -> Path:
+    """Strokes-to-go heatmap with the greedy aim arrows (part 05's writer)."""
+    out_dir = Path(out_dir)
+    path = out_dir / f"{hole.number}_{solution.mode}_heatmap_policy.png"
+    write_value_png(solution, hole, path, arrow_every=3)
+    return path
+
+
+def plot_disagreement_map(solution: Solution, hole: Hole, player: Player, out_dir: Path) -> Path:
+    """Where the pin and centre baselines pick a different action from the optimal policy."""
+    plt = _plt()
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    flat = hole.lie.reshape(-1)
+    playable = np.isin(flat, [int(Lie.TEE), int(Lie.FAIRWAY), int(Lie.ROUGH), int(Lie.BUNKER)]) & (
+        solution.club != NO_ACTION
+    )
+    fig, axes = plt.subplots(1, 2, figsize=(8, 4.5), sharey=True)
+    for ax, (name, policy) in zip(
+        axes,
+        (("pin", pin_policy(hole, player)), ("centre", centre_policy(hole, player))),
+        strict=True,
+    ):
+        grid = np.full(flat.size, np.nan)
+        for cell in np.flatnonzero(playable):
+            r, c = divmod(int(cell), hole.cols)
+            x, y = (c + 0.5) * hole.cell_m, (r + 0.5) * hole.cell_m
+            club, direction = policy(x, y, Lie(int(flat[cell])))
+            same_club = club == int(solution.club[cell])
+            same_dir = direction == int(solution.dir[cell])
+            grid[cell] = 0.0 if same_club and same_dir else (1.0 if same_club else 2.0)
+        im = ax.imshow(
+            grid.reshape(hole.rows, hole.cols), origin="lower", cmap="viridis", vmin=0, vmax=2
+        )
+        ax.set_title(f"{name} vs optimal")
+        ax.set_xlabel("col")
+    axes[0].set_ylabel("row (tee at the bottom)")
+    cbar = fig.colorbar(im, ax=axes, ticks=[0, 1, 2], shrink=0.8)
+    cbar.ax.set_yticklabels(["same", "direction differs", "club differs"])
+    fig.suptitle(f"Hole {hole.number}, {solution.mode} mode: where the baselines disagree")
+    path = out_dir / f"{hole.number}_{solution.mode}_disagreement.png"
+    fig.savefig(path, dpi=130)
+    plt.close(fig)
+    return path
