@@ -1,0 +1,107 @@
+"""Tests for part 16: approaches.py (the policy factories the benchmark compares)."""
+
+from __future__ import annotations
+
+import numpy as np
+import pytest
+
+from caddie.approaches import (
+    APPROACHES,
+    Approach,
+    memoise_policy,
+    playable_cells,
+)
+from caddie.evaluate import centre_policy, optimal_policy, pin_policy
+from caddie.mdp import DIRECTIONS_DEG, Lie
+from caddie.online import recommend
+from caddie.value_iteration import solve
+from tests.fixtures.toy_hole import toy_hole, toy_player
+
+EIGHT = ("grid", "rollout", "pin", "centre", "greedy", "risk", "sparse2", "mcts")
+
+
+@pytest.fixture(scope="module")
+def toy_drop():
+    hole = toy_hole()
+    player = toy_player()
+    return solve(hole, player, "drop", K=200, tol=0.01, max_sweeps=50), hole, player
+
+
+# --- slice 2: registry ---------------------------------------------------------------------------
+
+
+def test_registry_has_the_eight_ids_with_their_solution_needs():
+    assert tuple(APPROACHES) == EIGHT
+    for a in APPROACHES.values():
+        assert isinstance(a, Approach) and a.id in EIGHT
+    assert {k for k, a in APPROACHES.items() if not a.needs_solution} == {"pin", "centre", "greedy"}
+    assert {k for k, a in APPROACHES.items() if a.point is not None} == {
+        "grid",
+        "rollout",
+        "sparse2",
+        "mcts",
+    }
+
+
+def _cells_xy(hole, cells):
+    r, c = np.divmod(cells, hole.cols)
+    return (c + 0.5) * hole.cell_m, (r + 0.5) * hole.cell_m
+
+
+def test_grid_pin_centre_reproduce_part_07(toy_drop):
+    solution, hole, player = toy_drop
+    flat = hole.lie.reshape(-1)
+    cells = playable_cells(hole, solution)
+    xs, ys = _cells_xy(hole, cells)
+    for name, ref in (
+        ("grid", optimal_policy(solution, hole)),
+        ("pin", pin_policy(hole, player)),
+        ("centre", centre_policy(hole, player)),
+    ):
+        pol = APPROACHES[name].build(hole, player, solution, "drop")
+        for x, y, cell in zip(xs, ys, cells, strict=True):
+            lie = Lie(int(flat[cell]))
+            assert pol(float(x), float(y), lie) == ref(float(x), float(y), lie)
+
+
+def test_rollout_agrees_with_grid_at_cell_centres_up_to_ties(toy_drop):
+    """Same club at every sampled cell; the grid direction's Q within 0.05 of the rollout's
+    best (part 06 found the toy has direction ties, so exact matches are about 4 of 10)."""
+    solution, hole, player = toy_drop
+    flat = hole.lie.reshape(-1)
+    cells = playable_cells(hole, solution)
+    pick = np.random.default_rng(1).choice(cells, size=10, replace=False)
+    xs, ys = _cells_xy(hole, pick)
+    grid = APPROACHES["grid"].build(hole, player, solution, "drop")
+    rollout = APPROACHES["rollout"].build(hole, player, solution, "drop", m=400)
+    within = 0
+    for x, y, c in zip(xs, ys, pick, strict=True):
+        lie = Lie(int(flat[c]))
+        gc, gd = grid(float(x), float(y), lie)
+        rc, _rd = rollout(float(x), float(y), lie)
+        assert rc == gc
+        rec = recommend(solution, hole, player, float(x), float(y), lie, "drop", m=400, seed=0)
+        within += rec.q_by_action[gc, gd] - rec.expected_strokes < 0.05
+    assert within >= 9, f"{within} of 10 cells within 0.05 of the rollout's best"
+
+
+def test_grid_point_policy_returns_names_and_degrees(toy_drop):
+    solution, hole, player = toy_drop
+    point = APPROACHES["grid"].point(hole, player, solution, "drop")
+    club, deg = point(*hole.tee_xy, Lie.TEE)
+    assert club in player.clubs and float(deg) in set(DIRECTIONS_DEG.tolist())
+
+
+def test_memoise_policy_decides_each_cell_once(toy_drop):
+    solution, hole, player = toy_drop
+    calls = []
+
+    def slow(x, y, lie):
+        calls.append((x, y, lie))
+        return 0, 45
+
+    pol = memoise_policy(hole, slow)
+    assert pol(2.5, 2.5, Lie.TEE) == (0, 45)
+    assert pol(2.6, 2.4, Lie.TEE) == (0, 45)  # same cell
+    assert pol(2.5, 2.5, Lie.ROUGH) == (0, 45)  # a different lie is a different state
+    assert len(calls) == 2
