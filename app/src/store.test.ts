@@ -1,8 +1,10 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { policyAt, valueNearest } from './lib/grid'
 import { readToyBundle, toyPlayerDoc } from './lib/toyFiles'
-import { initialState, useStore } from './store'
+import type { RolloutResult } from './lib/rollout'
+import type { HoleBundle, Lie, Player, XY } from './lib/types'
+import { initialState, type RolloutClientLike, setRolloutClient, useStore } from './store'
 
 beforeEach(() => useStore.setState(initialState))
 
@@ -163,5 +165,91 @@ describe('derived recommendation (subscriber)', () => {
     useStore.setState({ bundle, ball: tee })
     useStore.getState().setRecommendation({ club: 'x', dir_deg: 0, expected_strokes: 9, source: 'worker' })
     expect(useStore.getState().recommendation?.source).toBe('worker')
+  })
+})
+
+describe('worker wiring (part 12 slice 6)', () => {
+  const bundle = readToyBundle()
+  const tee = { x: bundle.meta.tee_xy[0], y: bundle.meta.tee_xy[1] }
+
+  class FakeClient implements RolloutClientLike {
+    bundles: HoleBundle[] = []
+    calls: { from: XY; lie: Lie }[] = []
+    setBundle(b: HoleBundle) {
+      this.bundles.push(b)
+    }
+    recommend(_player: Player, from: XY, lie: Lie): Promise<RolloutResult | null> {
+      this.calls.push({ from, lie })
+      const result: RolloutResult = {
+        club: 'test7i',
+        dir_deg: 12,
+        expected_strokes: 9.5,
+        baseline_pin_strokes: 9.9,
+        q: new Float32Array(0),
+      }
+      return Promise.resolve(result)
+    }
+    terminate() {
+      this.calls = []
+    }
+  }
+
+  const flush = () => new Promise((r) => setTimeout(r, 0))
+
+  afterEach(() => setRolloutClient(null))
+
+  it('defaults to useWorker false and the grid lookup', () => {
+    const client = new FakeClient()
+    setRolloutClient(client)
+    useStore.setState({ bundle, player: toyPlayerDoc() })
+    useStore.getState().setBall(tee)
+    expect(useStore.getState().useWorker).toBe(false)
+    expect(useStore.getState().recommendation?.source).toBe('grid')
+    expect(client.calls).toHaveLength(0)
+  })
+
+  it('with useWorker true, ball and lie changes go to the worker and its answer becomes the recommendation', async () => {
+    const client = new FakeClient()
+    setRolloutClient(client)
+    useStore.setState({ bundle, player: toyPlayerDoc() })
+    useStore.getState().setUseWorker(true)
+    useStore.getState().setBall(tee)
+    await flush()
+    expect(client.calls).toHaveLength(1)
+    expect(client.calls[0].lie).toBe(2)
+    const r = useStore.getState().recommendation
+    expect(r?.source).toBe('worker')
+    expect(r?.expected_strokes).toBe(9.5)
+    expect(r?.baseline_pin_strokes).toBe(9.9)
+    useStore.getState().setLieOverride(3)
+    await flush()
+    expect(client.calls).toHaveLength(2)
+    expect(client.calls[1].lie).toBe(3)
+    expect(new Set(client.bundles)).toEqual(new Set([bundle])) // same object each time; the client dedups
+  })
+
+  it('sends the grid lookup first so the panel is never empty while the worker runs', () => {
+    const slow = new FakeClient()
+    slow.recommend = () => new Promise(() => undefined) // never resolves
+    setRolloutClient(slow)
+    useStore.setState({ bundle, player: toyPlayerDoc(), useWorker: true })
+    useStore.getState().setBall(tee)
+    expect(useStore.getState().recommendation?.source).toBe('grid')
+  })
+
+  it('on the green or without a player it clears the recommendation and does not post', async () => {
+    const client = new FakeClient()
+    setRolloutClient(client)
+    useStore.setState({ bundle, player: toyPlayerDoc(), useWorker: true })
+    useStore.getState().setBall({ x: bundle.meta.pin_xy[0], y: bundle.meta.pin_xy[1] })
+    await flush()
+    expect(useStore.getState().recommendation).toBeNull()
+    expect(client.calls).toHaveLength(0)
+  })
+
+  it('without a client, useWorker true falls back to the grid', () => {
+    useStore.setState({ bundle, player: toyPlayerDoc(), useWorker: true })
+    useStore.getState().setBall(tee)
+    expect(useStore.getState().recommendation?.source).toBe('grid')
   })
 })
