@@ -195,6 +195,64 @@ def load_cases(
     return cases
 
 
+# --- slice 5: point simulator ------------------------------------------------------------------
+
+MAX_POINT_SHOTS = 40
+
+
+def simulate_points(
+    hole: Hole,
+    player: Player,
+    policy: Callable[[float, float, Lie], tuple[str, float]],
+    mode: PenaltyMode,
+    n: int,
+    seed: int,
+    start: tuple[float, float, Lie],
+) -> tuple[np.ndarray, float]:
+    """Continuous play: ``n`` plays from ``start`` under a point policy (club name, aim deg).
+
+    Each shot lands through :func:`caddie.online.shots_from_point` with one draw; the draws
+    for every (play, shot) come from ``seed`` up front, so two policies see the same ones.
+    A play ends when the ball rests on the green, adding E[putts] from the resting point,
+    or after ``MAX_POINT_SHOTS``. Returns ``(strokes, seconds spent deciding)``.
+    """
+    import time
+
+    from caddie.mdp import Draws, locate
+    from caddie.online import shots_from_point
+
+    rng = np.random.default_rng(seed)
+    normals = rng.standard_normal((MAX_POINT_SHOTS, n, 3))
+    uniforms = rng.random((MAX_POINT_SHOTS, n))
+    strokes = np.zeros(n)
+    decide_s = 0.0
+    px, py = hole.pin_xy
+    for k in range(n):
+        x, y, lie = float(start[0]), float(start[1]), Lie(start[2])
+        for shot in range(MAX_POINT_SHOTS):
+            t0 = time.perf_counter()
+            club_name, dir_deg = policy(x, y, lie)
+            decide_s += time.perf_counter() - t0
+            club = player.clubs[club_name]
+            draws = Draws(
+                theta=normals[shot, k, 0:1],
+                z=normals[shot, k, 1:2],
+                u=uniforms[shot, k : k + 1],
+                roll=normals[shot, k, 2:3],
+            )
+            nx, ny, cost = shots_from_point(hole, player, x, y, lie, club, dir_deg, draws, mode)
+            x, y = float(nx[0]), float(ny[0])
+            strokes[k] += float(cost[0])
+            _, code, _ = locate(hole, np.array([x]), np.array([y]))
+            lie = Lie(int(code[0]))
+            if lie == Lie.GREEN:
+                strokes[k] += float(np.asarray(player.putting(np.hypot(x - px, y - py))))
+                break
+        else:
+            log.warning("play %d did not hole out in %d shots", k, MAX_POINT_SHOTS)
+    return strokes, decide_s
+
+
 # --- slice 4: run a case on the cell simulator --------------------------------------------------
 
 BLOWUP_OVER_PAR = 3
@@ -235,6 +293,23 @@ def _build(approach, case: Case, seed: int, settings: dict | None = None):
     return policy, build_s
 
 
+def _build_point(approach, case: Case, seed: int, settings: dict | None = None):
+    """``(point policy, index policy, build_s)`` or None when the approach has no point form."""
+    import time
+
+    from caddie.approaches import policy_from_point
+
+    if approach.point is None:
+        return None
+    t0 = time.perf_counter()
+    try:
+        point = approach.point(case.hole, case.player, case.solution, case.mode, **(settings or {}))
+    except NotImplementedError as e:
+        log.info("%s", e)
+        return None
+    return point, policy_from_point(case.player, point), time.perf_counter() - t0
+
+
 def _decisions_at(case: Case, policy, points: dict[str, tuple[float, float, Lie]]) -> dict:
     out = {}
     for name, (x, y, lie) in points.items():
@@ -269,8 +344,8 @@ def run_case(
     from caddie.approaches import APPROACHES
     from caddie.evaluate import disagreement, simulate
 
-    if simulator != "cell":
-        raise ValueError("only the cell simulator exists until slice 5")
+    if simulator not in ("cell", "point"):
+        raise ValueError(f"unknown simulator {simulator!r}")
     results: dict[str, dict] = {}
     strokes: dict[str, np.ndarray] = {}
     decisions: dict[str, dict] = {}
@@ -278,16 +353,32 @@ def run_case(
     points = _action_points(case)
     for name in approaches:
         approach = APPROACHES[name]
-        built = _build(approach, case, seed, (settings or {}).get(name))
-        if built is None:
-            not_run.append(name)
-            continue
-        policy, build_s = built
         clock = {"s": 0.0, "n": 0}
-        timed = _timed(policy, clock)
-        s = simulate(
-            case.hole, case.player, timed, case.mode, n=case.n, seed=seed, start=case.start
-        )
+        if simulator == "cell":
+            built = _build(approach, case, seed, (settings or {}).get(name))
+            if built is None:
+                not_run.append(name)
+                continue
+            policy, build_s = built
+            s = simulate(
+                case.hole,
+                case.player,
+                _timed(policy, clock),
+                case.mode,
+                n=case.n,
+                seed=seed,
+                start=case.start,
+            )
+        else:
+            built = _build_point(approach, case, seed, (settings or {}).get(name))
+            if built is None:
+                not_run.append(name)
+                continue
+            point, policy, build_s = built
+            s, clock["s"] = simulate_points(
+                case.hole, case.player, point, case.mode, case.n, seed, case.start
+            )
+            clock["n"] = int(np.rint(s.sum() - 1.5 * s.size)) if s.size else 0  # about one per shot
         strokes[name] = s
         decisions[name] = _decisions_at(case, policy, points)
         results[name] = {

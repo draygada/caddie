@@ -166,3 +166,69 @@ def test_check_expectations_reports_a_failing_one_with_its_measured_value(toy_ca
     (bad,) = [f for f in failed if f["id"] == "impossible"]
     assert bad["measured"]["pin"] > bad["measured"]["grid"]
     assert {s["id"] for s in skipped} == {"grid-beats-centre", "rollout-close-to-grid"}
+
+
+# --- slice 5: point simulator ---------------------------------------------------------------------
+
+
+def test_point_simulator_with_the_grid_policy_is_near_the_cell_simulator(toy_case):
+    from caddie.approaches import APPROACHES
+    from caddie.benchmark import simulate_points
+    from caddie.evaluate import simulate
+
+    hole, player, sol = toy_case.hole, toy_case.player, toy_case.solution
+    cell = simulate(
+        hole, player, APPROACHES["grid"].build(hole, player, sol, "drop"), "drop", 3000, 0
+    )
+    point = APPROACHES["grid"].point(hole, player, sol, "drop")
+    strokes, decide_s = simulate_points(hole, player, point, "drop", 3000, 0, toy_case.start)
+    assert strokes.shape == (3000,) and decide_s >= 0.0
+    assert abs(strokes.mean() - cell.mean()) < 0.15
+    again, _ = simulate_points(hole, player, point, "drop", 3000, 0, toy_case.start)
+    np.testing.assert_array_equal(again, strokes)  # seeded and paired
+
+
+def test_point_simulator_matches_an_independent_scalar_monte_carlo(toy_case):
+    import math
+
+    from caddie.benchmark import simulate_points
+    from caddie.mdp import locate
+    from caddie.online import mulberry32, sample_landing
+    from tests.fixtures.toy_hole import TOY_CLUB
+
+    hole, player = toy_case.hole, toy_case.player
+    club = player.clubs[TOY_CLUB]
+
+    def at_pin(x, y, lie):
+        return TOY_CLUB, 0.0
+
+    strokes, _ = simulate_points(hole, player, at_pin, "drop", 4000, 0, toy_case.start)
+
+    rng = mulberry32(7)
+    total = 0.0
+    for _ in range(4000):
+        x, y, lie = toy_case.start
+        for _shot in range(40):
+            shot = sample_landing(hole, player, club, (x, y), lie, 0.0, "drop", rng)
+            total += -shot["reward"]
+            x, y = shot["next"]
+            _, code, _ = locate(hole, np.array([x]), np.array([y]))
+            lie = Lie(int(code[0]))
+            if lie == Lie.GREEN:
+                total += float(player.putting(math.hypot(x - hole.pin_xy[0], y - hole.pin_xy[1])))
+                break
+    assert abs(strokes.mean() - total / 4000) < 0.05
+
+
+def test_run_case_on_the_point_simulator_covers_the_point_capable_approaches(toy_case):
+    from dataclasses import replace
+
+    from caddie.benchmark import run_case
+
+    case = replace(toy_case, n=300)
+    result = run_case(case, ["grid", "rollout", "pin"], seed=0, simulator="point")
+    assert result["simulator"] == "point"
+    assert set(result["approaches"]) == {"grid", "rollout"}
+    assert result["not_run"] == ["pin"]
+    assert result["approaches"]["rollout"]["decide_s"] > result["approaches"]["grid"]["decide_s"]
+    assert np.isfinite(result["approaches"]["rollout"]["disagreement"])
