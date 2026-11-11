@@ -5,7 +5,8 @@
  */
 import { create } from 'zustand'
 
-import { policyAt, valueNearest } from './lib/grid'
+import { lieAt, policyAt, valueNearest } from './lib/grid'
+import { createRolloutWorker, RolloutClient, type RolloutResult } from './lib/rollout'
 import type { HoleBundle, Lie, Mode, Player, XY } from './lib/types'
 
 export type HoleId = 10 | 11 | 12 | 'toy'
@@ -32,6 +33,8 @@ export interface State {
   lieOverride: Lie | null
   gps: Gps | null
   recommendation: Recommendation | null
+  /** Part 12: route ball and lie changes through the rollout worker (part 14 turns it on). */
+  useWorker: boolean
   setHole: (h: HoleId) => void
   setMode: (m: Mode) => void
   setTee: (name: string) => void
@@ -39,6 +42,7 @@ export interface State {
   setLieOverride: (l: Lie | null) => void
   setGps: (g: Gps | null) => void
   setRecommendation: (r: Recommendation | null) => void
+  setUseWorker: (on: boolean) => void
 }
 
 export const initialState = {
@@ -51,6 +55,7 @@ export const initialState = {
   lieOverride: null,
   gps: null,
   recommendation: null,
+  useWorker: false,
 }
 
 function sameXY(a: XY, b: readonly [number, number]): boolean {
@@ -77,6 +82,7 @@ export const useStore = create<State>()((set, get) => ({
   setLieOverride: (lieOverride) => set({ lieOverride }),
   setGps: (gps) => set({ gps }),
   setRecommendation: (recommendation) => set({ recommendation }),
+  setUseWorker: (useWorker) => set({ useWorker }),
 }))
 
 // --- derived recommendation (M1: a direct grid lookup) -------------------------------------
@@ -94,13 +100,61 @@ export function gridRecommendation(bundle: HoleBundle | null, ball: XY | null): 
   }
 }
 
+// --- part 12: the rollout worker -------------------------------------------------------------
+
+/** What the store needs from `RolloutClient`; tests substitute an in-process fake. */
+export interface RolloutClientLike {
+  setBundle(bundle: HoleBundle): void
+  recommend(player: Player, from: XY, lie: Lie, mode: Mode, m?: number, seed?: number): Promise<RolloutResult | null>
+  terminate(): void
+}
+
+let rolloutClient: RolloutClientLike | null = null
+
+/** Install (or remove with null) the worker client the subscriber posts to. */
+export function setRolloutClient(client: RolloutClientLike | null): void {
+  rolloutClient = client
+}
+
+export const WORKER_DRAWS = 100
+
 /**
- * Whenever ball, lieOverride or bundle changes and no worker is active (M1), write the grid
- * recommendation. Runs outside React render. Part 12's worker takes over by writing
- * `source: 'worker'` recommendations itself.
+ * Whenever ball, lieOverride or bundle changes: write the grid recommendation at once, and
+ * when `useWorker` is on and a client is installed, post to the worker and replace it with
+ * the worker's answer (`source: 'worker'`). Stale answers resolve null and are ignored.
+ * Runs outside React render.
  */
 useStore.subscribe((state, prev) => {
-  if (state.ball === prev.ball && state.lieOverride === prev.lieOverride && state.bundle === prev.bundle)
+  if (
+    state.ball === prev.ball &&
+    state.lieOverride === prev.lieOverride &&
+    state.bundle === prev.bundle &&
+    state.useWorker === prev.useWorker
+  )
     return
-  state.setRecommendation(gridRecommendation(state.bundle, state.ball))
+  const grid = gridRecommendation(state.bundle, state.ball)
+  state.setRecommendation(grid)
+  const { bundle, ball, player, mode } = state
+  if (!state.useWorker || !rolloutClient || !bundle || !ball || !player || !grid) return
+  const lie = state.lieOverride ?? lieAt(bundle, ball)
+  if (lie < 1 || lie > 4) return
+  rolloutClient.setBundle(bundle)
+  rolloutClient
+    .recommend(player, ball, lie, mode, WORKER_DRAWS, 1)
+    .then((result) => {
+      if (!result) return // superseded by a newer request
+      const now = useStore.getState()
+      if (now.ball !== ball || now.bundle !== bundle || now.lieOverride !== state.lieOverride) return
+      now.setRecommendation({
+        club: result.club,
+        dir_deg: result.dir_deg,
+        expected_strokes: result.expected_strokes,
+        baseline_pin_strokes: result.baseline_pin_strokes,
+        source: 'worker',
+      })
+    })
+    .catch((e: unknown) => console.warn('rollout worker:', e))
 })
+
+// In the browser, install the real Web Worker. Tests and node have no `Worker`.
+if (typeof Worker !== 'undefined') setRolloutClient(new RolloutClient(createRolloutWorker))
