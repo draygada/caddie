@@ -44,6 +44,7 @@ class Case:
     expect: list[dict]
     solution: Solution | None
     hole_key: str = ""  # "toy", "open_straight", "11", ... for file names and the solution cache
+    out_dir: Path | None = None  # where solutions are cached; None means no cache
     extras: dict = field(default_factory=dict)  # e.g. brute-force value for a band expectation
 
 
@@ -78,7 +79,9 @@ def _build_player(spec: dict, out_dir: Path) -> Player:
     if builder == "toy":
         return th.toy_player()
     if builder == "file":
-        path = Path(spec.get("path", out_dir / "player.json"))
+        if "path" not in spec and out_dir is None:
+            raise FileNotFoundError("player.json (no out_dir)")
+        path = Path(spec.get("path", (out_dir or Path(".")) / "player.json"))
         if not path.exists():
             raise FileNotFoundError(path)
         return read_player(path)
@@ -159,7 +162,7 @@ def load_cases(
     None and the caller solves. Unknown builders raise.
     """
     specs = json.loads(Path(path).read_text())
-    out_dir = Path(out_dir)
+    out_dir = Path(out_dir) if out_dir is not None else None
     cases: list[Case] = []
     for spec in specs:
         if ids is not None and spec["id"] not in ids:
@@ -167,7 +170,7 @@ def load_cases(
         mode: PenaltyMode = spec["mode"]
         hole, sol, key, _label, real = _build_hole(spec["hole"], out_dir)
         if real:
-            loaded = _load_real(key, mode, out_dir)
+            loaded = _load_real(key, mode, out_dir) if out_dir is not None else None
             if loaded is None:
                 log.warning("case %s skipped: no bundle for hole %s %s", spec["id"], key, mode)
                 continue
@@ -190,6 +193,7 @@ def load_cases(
                 expect=list(spec["expect"]),
                 solution=sol,
                 hole_key=key,
+                out_dir=out_dir,
             )
         )
     return cases
@@ -273,6 +277,20 @@ def _timed(policy: Callable, clock: dict) -> Callable:
     return wrapped
 
 
+def _settings(approach, case: Case, settings: dict | None) -> dict:
+    """Per-approach settings plus the solution cache path for approaches that solve."""
+    out = dict(settings or {})
+    if approach.id == "risk" and case.out_dir is not None and "cache_path" not in out:
+        lam = out.get("lam", "default")
+        out["cache_path"] = (
+            Path(case.out_dir)
+            / "benchmark"
+            / "solutions"
+            / f"{case.hole_key}_{case.mode}_risk{lam}.npz"
+        )
+    return out
+
+
 def _build(approach, case: Case, seed: int, settings: dict | None = None):
     """``(policy, build_s)`` for one approach on one case, or None when not implemented."""
     import time
@@ -282,7 +300,7 @@ def _build(approach, case: Case, seed: int, settings: dict | None = None):
     t0 = time.perf_counter()
     try:
         policy = approach.build(
-            case.hole, case.player, case.solution, case.mode, **(settings or {})
+            case.hole, case.player, case.solution, case.mode, **_settings(approach, case, settings)
         )
     except NotImplementedError as e:
         log.info("%s", e)

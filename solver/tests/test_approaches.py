@@ -111,9 +111,9 @@ def test_memoise_policy_decides_each_cell_once(toy_drop):
 
 
 def test_greedy_hits_the_driver_at_the_pin_on_the_open_hole():
-    from tests.fixtures.benchmark_holes import open_straight, three_club
+    from tests.fixtures.benchmark_holes import open_straight, round_numbers
 
-    hole, player = open_straight(), three_club()
+    hole, player = open_straight(), round_numbers()
     greedy = APPROACHES["greedy"].build(hole, player, None, "drop")
     club, direction = greedy(*hole.tee_xy, Lie.TEE)
     assert player.club_order[club] == "driver"
@@ -129,3 +129,44 @@ def test_greedy_is_no_better_than_grid_on_the_toy(toy_drop):
     a = simulate(hole, player, grid, "drop", n=2000, seed=0)
     b = simulate(hole, player, greedy, "drop", n=2000, seed=0)
     assert b.mean() >= a.mean() - 0.02
+
+
+# --- slice 6: risk (exponential utility) -------------------------------------------------------
+
+
+def test_exponential_utility_solve_converges_and_differs_from_grid_near_the_water(toy_drop):
+    from caddie.approaches import risk_solution
+    from caddie.value_iteration import solve as vi_solve
+
+    solution, hole, player = toy_drop
+    risk = risk_solution(hole, player, "drop", lam=0.5, K=200)
+    assert risk.residual_history[-1] < 0.01
+    cells = playable_cells(hole, solution)
+    assert np.all(np.isfinite(risk.U[cells]))
+    # the certainty equivalent is never below the expected strokes (Jensen)
+    assert np.all(risk.U[cells] >= solution.U[cells] - 1e-3)
+    differ = cells[
+        (risk.club[cells] != solution.club[cells]) | (risk.dir[cells] != solution.dir[cells])
+    ]
+    assert differ.size > 0
+    # lambda -> 0 recovers the expected-strokes solution
+    tiny = vi_solve(hole, player, "drop", K=200, objective=("exp", 1e-4))
+    np.testing.assert_allclose(tiny.U[cells], solution.U[cells], atol=0.02)
+    plain = vi_solve(hole, player, "drop", K=200, objective="strokes")
+    np.testing.assert_array_equal(plain.club, solution.club)
+
+
+def test_risk_has_fewer_blowups_than_grid_on_the_weak_water_carry():
+    from caddie.benchmark import CASES_PATH, load_cases, run_case
+    from caddie.value_iteration import solve as vi_solve
+
+    def plain(hole, player, mode, key, out_dir):
+        return vi_solve(hole, player, mode, K=200)
+
+    (case,) = load_cases(CASES_PATH, out_dir=None, ids=["water-carry-weak"], solve_fn=plain)
+    result = run_case(case, ["grid", "pin", "risk"], seed=0)
+    assert "grid-lays-up" in result["passed"] and "pin-goes-for-it" in result["passed"]
+    assert "risk-fewer-blowups" in result["passed"]
+    m = result["approaches"]
+    assert abs(m["risk"]["mean_strokes"] - m["grid"]["mean_strokes"]) <= 0.3
+    assert m["risk"]["build_s"] > 0.0

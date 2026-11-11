@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 
@@ -29,7 +30,7 @@ from caddie.mdp import (
     step_batch,
 )
 from caddie.online import recommend
-from caddie.value_iteration import NO_ACTION, PLAYABLE_LIES, Solution
+from caddie.value_iteration import NO_ACTION, PLAYABLE_LIES, Solution, solve
 
 log = logging.getLogger(__name__)
 
@@ -206,6 +207,58 @@ def build_greedy(
     return greedy_policy(hole, player, mode, K=K, seed=seed)
 
 
+# --- risk: the grid policy under exponential utility ----------------------------------------------
+
+RISK_LAMBDA = 0.5  # per stroke; the benchmark's fixed setting, swept in the compute figure
+
+
+def risk_solution(
+    hole: Hole,
+    player: Player,
+    mode: PenaltyMode,
+    lam: float = RISK_LAMBDA,
+    K: int = 200,
+    tol: float = 0.01,
+    seed: int = 0,
+    cache_path: Path | None = None,
+) -> Solution:
+    """Value iteration under ``-exp(lam x strokes)``; same draws and tolerance as ``grid``.
+
+    ``cache_path`` (an ``.npz``) keeps the grids between runs, since a real hole takes as
+    long as the plain solve.
+    """
+    if cache_path is not None and Path(cache_path).exists():
+        z = np.load(cache_path)
+        return Solution(
+            hole=hole.number,
+            mode=mode,
+            U=z["U"],
+            club=z["club"],
+            dir=z["dir"],
+            sweeps=int(z["sweeps"]),
+        )
+    sol = solve(hole, player, mode, K=K, tol=tol, seed=seed, objective=("exp", lam))
+    if cache_path is not None:
+        Path(cache_path).parent.mkdir(parents=True, exist_ok=True)
+        np.savez(cache_path, U=sol.U, club=sol.club, dir=sol.dir, sweeps=sol.sweeps)
+    return sol
+
+
+def build_risk(
+    hole: Hole,
+    player: Player,
+    solution: Solution | None,
+    mode: PenaltyMode,
+    lam: float = RISK_LAMBDA,
+    K: int = 200,
+    seed: int = 0,
+    cache_path: Path | None = None,
+) -> Policy:
+    return optimal_policy(
+        risk_solution(hole, player, mode, lam=lam, K=K, seed=seed, cache_path=cache_path), hole
+    )
+
+
 # --- the new four (filled in by later slices) ---------------------------------------------------
 
 
@@ -222,7 +275,7 @@ APPROACHES: dict[str, Approach] = {
     "pin": Approach("pin", build_pin, None, needs_solution=False),
     "centre": Approach("centre", build_centre, None, needs_solution=False),
     "greedy": Approach("greedy", build_greedy, None, needs_solution=False, memoise=True),
-    "risk": Approach("risk", _later("risk", 6), None, needs_solution=True),
+    "risk": Approach("risk", build_risk, None, needs_solution=True),
     "sparse2": Approach(
         "sparse2", _later("sparse2", 7), _later("sparse2", 7), needs_solution=True, memoise=True
     ),

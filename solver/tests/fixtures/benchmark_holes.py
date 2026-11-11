@@ -101,8 +101,10 @@ HOLE_BUILDERS = {
 }
 
 
-def three_club(driver_mu_c: float = 200.0) -> Player:
-    """Driver, 7i and pw with round numbers; lie multipliers and putting from the contract."""
+def round_numbers(driver_mu_c: float = 200.0) -> Player:
+    """Driver, 7i, pw and two partial wedges with round numbers; contract lie multipliers and
+    putting. The wedges mirror the real bag's short end: without them the pin baseline cannot
+    finish a 60 m wide hole and the exponential-utility value diverges."""
 
     def club(mu_c, sigma_theta_deg, sigma_d, p, mu_r, sigma_r) -> ClubParams:
         return ClubParams(
@@ -120,6 +122,8 @@ def three_club(driver_mu_c: float = 200.0) -> Player:
         "driver": club(driver_mu_c, 6.0, 0.07, 0.10, 15.0, 8.0),
         "7i": club(140.0, 4.0, 0.05, 0.05, 5.0, 3.0),
         "pw": club(100.0, 3.5, 0.05, 0.05, 2.0, 1.0),
+        "sw50": club(50.0, 3.5, 0.06, 0.05, 1.0, 1.0),
+        "sw30": club(30.0, 3.5, 0.06, 0.05, 0.5, 0.5),
     }
     putting = PuttingTable(
         distance_m=np.asarray(PUTTING_DISTANCE_M, dtype=float),
@@ -128,10 +132,10 @@ def three_club(driver_mu_c: float = 200.0) -> Player:
     return Player(
         handicap=15,
         clubs=clubs,
-        club_order=["driver", "7i", "pw"],
+        club_order=["driver", "7i", "pw", "sw50", "sw30"],
         lie={k: dict(v) for k, v in LIE_MULT.items()},
         putting=putting,
     )
 
 
-PLAYER_BUILDERS = {"three_club": three_club}
+PLAYER_BUILDERS = {"round_numbers": round_numbers}

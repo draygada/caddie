@@ -26,7 +26,7 @@
   {
     "id": "open-straight",
     "hole": {"builder": "open_straight"},
-    "player": {"builder": "three_club"},
+    "player": {"builder": "round_numbers"},
     "mode": "drop",
     "n": 2000,
     "expect": [
@@ -37,7 +37,7 @@
   {
     "id": "water-carry-weak",
     "hole": {"builder": "water_carry", "args": {"water_from_m": 180, "water_to_m": 200}},
-    "player": {"builder": "three_club", "args": {"driver_mu_c": 190}},
+    "player": {"builder": "round_numbers", "args": {"driver_mu_c": 190}},
     "mode": "drop",
     "n": 2000,
     "expect": [
@@ -52,7 +52,7 @@
   {
     "id": "water-carry-strong",
     "hole": {"builder": "water_carry", "args": {"water_from_m": 180, "water_to_m": 200}},
-    "player": {"builder": "three_club", "args": {"driver_mu_c": 230}},
+    "player": {"builder": "round_numbers", "args": {"driver_mu_c": 230}},
     "mode": "drop",
     "n": 2000,
     "expect": [
@@ -64,7 +64,7 @@
   {
     "id": "ob-left",
     "hole": {"builder": "ob_side"},
-    "player": {"builder": "three_club"},
+    "player": {"builder": "round_numbers"},
     "mode": "drop",
     "n": 2000,
     "expect": [
@@ -76,7 +76,7 @@
   {
     "id": "bunker-front",
     "hole": {"builder": "bunker_front"},
-    "player": {"builder": "three_club"},
+    "player": {"builder": "round_numbers"},
     "start": {"short_of_pin_m": 120, "lie": "fairway"},
     "mode": "drop",
     "n": 2000,

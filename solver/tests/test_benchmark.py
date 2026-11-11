@@ -17,7 +17,7 @@ from tests.fixtures.benchmark_holes import (
     bunker_front,
     ob_side,
     open_straight,
-    three_club,
+    round_numbers,
     water_carry,
 )
 
@@ -60,10 +60,11 @@ def test_bunker_front_cells_sit_directly_short_of_the_green():
         assert hole.lie[BUNKER_FRONT_ROW + 1, c] == int(Lie.GREEN)
 
 
-def test_three_club_player_numbers():
-    p = three_club()
-    assert p.club_order == ["driver", "7i", "pw"]
-    assert p.clubs["driver"].mu_c == 200.0 and three_club(190).clubs["driver"].mu_c == 190.0
+def test_round_numbers_player_numbers():
+    p = round_numbers()
+    assert p.club_order == ["driver", "7i", "pw", "sw50", "sw30"]
+    assert p.clubs["sw30"].mu_c == 30.0
+    assert p.clubs["driver"].mu_c == 200.0 and round_numbers(190).clubs["driver"].mu_c == 190.0
     assert p.lie["rough"]["carry"] == 0.9 and p.lie["bunker"]["roll"] == 0.0
     assert float(p.putting(1.0)) == pytest.approx(1.07)
 
