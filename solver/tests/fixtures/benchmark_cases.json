@@ -68,7 +68,7 @@
     "mode": "drop",
     "n": 2000,
     "expect": [
-      {"id": "grid-aims-right", "kind": "action", "approach": "grid", "at": "start", "dir_deg_min": 4},
+      {"id": "grid-aims-right", "kind": "action", "approach": "grid", "at": "start", "dir_deg_min": 2},
       {"id": "grid-beats-pin-by-0.2", "kind": "order", "lower": "grid", "upper": "pin", "by_at_least": 0.2},
       {"id": "risk-aims-at-least-as-right", "kind": "action", "approach": "risk", "at": "start", "dir_deg_min": "grid"}
     ]

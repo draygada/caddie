@@ -102,9 +102,10 @@ HOLE_BUILDERS = {
 
 
 def round_numbers(driver_mu_c: float = 200.0) -> Player:
-    """Driver, 7i, pw and two partial wedges with round numbers; contract lie multipliers and
-    putting. The wedges mirror the real bag's short end: without them the pin baseline cannot
-    finish a 60 m wide hole and the exponential-utility value diverges."""
+    """A nine-club bag with regular gaps down to a 20 m chip, round numbers, contract lie
+    multipliers and putting. A coarser bag produced artefacts the real bag does not have: a
+    non-monotone value grid where no club fit the distance, and baselines that could not
+    finish on a 12.5 m green."""
 
     def club(mu_c, sigma_theta_deg, sigma_d, p, mu_r, sigma_r) -> ClubParams:
         return ClubParams(
@@ -120,10 +121,14 @@ def round_numbers(driver_mu_c: float = 200.0) -> Player:
 
     clubs = {
         "driver": club(driver_mu_c, 6.0, 0.07, 0.10, 15.0, 8.0),
+        "5h": club(170.0, 5.0, 0.06, 0.08, 10.0, 5.0),
         "7i": club(140.0, 4.0, 0.05, 0.05, 5.0, 3.0),
+        "9i": club(120.0, 3.5, 0.05, 0.05, 3.0, 2.0),
         "pw": club(100.0, 3.5, 0.05, 0.05, 2.0, 1.0),
-        "sw50": club(50.0, 3.5, 0.06, 0.05, 1.0, 1.0),
-        "sw30": club(30.0, 3.5, 0.06, 0.05, 0.5, 0.5),
+        "sw80": club(80.0, 3.5, 0.06, 0.05, 1.5, 1.0),
+        "sw60": club(60.0, 3.5, 0.06, 0.05, 1.0, 1.0),
+        "sw40": club(40.0, 3.5, 0.06, 0.05, 0.5, 0.5),
+        "sw20": club(20.0, 3.5, 0.06, 0.05, 0.5, 0.5),
     }
     putting = PuttingTable(
         distance_m=np.asarray(PUTTING_DISTANCE_M, dtype=float),
@@ -132,7 +137,7 @@ def round_numbers(driver_mu_c: float = 200.0) -> Player:
     return Player(
         handicap=15,
         clubs=clubs,
-        club_order=["driver", "7i", "pw", "sw50", "sw30"],
+        club_order=list(clubs),
         lie={k: dict(v) for k, v in LIE_MULT.items()},
         putting=putting,
     )

@@ -62,8 +62,8 @@ def test_bunker_front_cells_sit_directly_short_of_the_green():
 
 def test_round_numbers_player_numbers():
     p = round_numbers()
-    assert p.club_order == ["driver", "7i", "pw", "sw50", "sw30"]
-    assert p.clubs["sw30"].mu_c == 30.0
+    assert p.club_order[:3] == ["driver", "5h", "7i"] and p.club_order[-1] == "sw20"
+    assert len(p.club_order) == 9 and p.clubs["sw20"].mu_c == 20.0
     assert p.clubs["driver"].mu_c == 200.0 and round_numbers(190).clubs["driver"].mu_c == 190.0
     assert p.lie["rough"]["carry"] == 0.9 and p.lie["bunker"]["roll"] == 0.0
     assert float(p.putting(1.0)) == pytest.approx(1.07)
