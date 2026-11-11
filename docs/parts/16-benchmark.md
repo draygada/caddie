@@ -36,7 +36,7 @@ A case is one JSON object in `solver/tests/fixtures/benchmark_cases.json`:
   "id": "water-carry-weak",
   "hole": {"builder": "water_carry", "args": {"water_from_m": 180, "water_to_m": 200}},
   "player": {"builder": "round_numbers", "args": {"driver_mu_c": 190}},
-  "start": {"x": 30.0, "y": 2.5, "lie": "tee"},
+  "start": {"x": 60.0, "y": 2.5, "lie": "tee"},
   "mode": "drop",
   "n": 2000,
   "expect": [
@@ -58,14 +58,14 @@ A case is one JSON object in `solver/tests/fixtures/benchmark_cases.json`:
 - `band`: `lo <= mean[approach] <= hi`, used where an independent value exists (the toy's `-U[tee]`, the brute-force Monte Carlo in `toy_hole.py`).
 - `action`: the approach's decision at `at` (`start` or an `[x, y, lie]` point) has `club` / `club_not` / `dir_deg_min` / `dir_deg_max` (positive is the golfer's right).
 
-Synthetic holes (`benchmark_holes.py`, all cell 5 m, pin at the green centroid, par set by the builder):
+Synthetic holes (`benchmark_holes.py`, all cell 5 m, 70 rows x 24 cols (350 x 120 m), a 60 m fairway on columns 6 to 17 with 30 m rough shoulders either side, tee at (60, 2.5), pin at the green centroid, par 4). The shoulders are there because off the grid is OB, as on the real holes, and a 60 m wide hole put a 6 degree driver off the hole a fifth of the time, which made the grid lay up for the wrong reason:
 
 | builder | geometry | what it tests |
 | --- | --- | --- |
-| `open_straight` | 12 x 70 cells (60 x 350 m), fairway everywhere, round green of radius 12.5 m centred at y = 330 | no-hazard control: every sensible approach should tie |
+| `open_straight` | fairway and shoulders only, round green of radius 12.5 m centred at (60, 330) | no-hazard control: every sensible approach should tie |
 | `water_carry` | `open_straight` plus a water band across the full width from `water_from_m` to `water_to_m` | lay up or go for it, decided by the driver carry distribution |
-| `ob_side` | 12 x 70, OB on columns 0 and 1, fairway columns 2 to 7, rough columns 8 to 11, green as above | the optimal aim is offset away from the OB side |
-| `bunker_front` | `open_straight` plus bunkers in the three cells directly short of the green | short-side avoidance: the grid plays to the centre or long |
+| `ob_side` | the left shoulder is OB (columns 0 to 5, so the OB edge is 30 m left of the tee line), fairway 6 to 17, rough 18 to 23 | the optimal aim is offset away from the OB side |
+| `bunker_front` | `open_straight` plus bunkers in the three cells directly short of the green (row 63, columns 11 to 13) | short-side avoidance: the grid plays to the centre or long |
 
 The `round_numbers` player, a nine-club bag with regular gaps so no distance is awkward (`mu_c`, `sigma_theta_deg`, `sigma_d`, `p`, `mu_r`, `sigma_r`): `driver` 200 (overridable), 6, 0.07, 0.10, 15, 8; `5h` 170, 5, 0.06, 0.08, 10, 5; `7i` 140, 4, 0.05, 0.05, 5, 3; `9i` 120, 3.5, 0.05, 0.05, 3, 2; `pw` 100, 3.5, 0.05, 0.05, 2, 1; `sw80` 80, 3.5, 0.06, 0.05, 1.5, 1; `sw60` 60, 3.5, 0.06, 0.05, 1, 1; `sw40` 40, 3.5, 0.06, 0.05, 0.5, 0.5; `sw20` 20, 3.5, 0.06, 0.05, 0.5, 0.5. Lie multipliers and the putting table from the root data contract. These are round numbers chosen for the synthetic cases; they are not the fitted player. The bag is this full because a coarse one produced artefacts the real bag does not have: with driver, 7i, pw, sw50 and sw30 the value grid was non-monotone in distance (a driver that lands 90 to 120 m out was worse than a lay-up), the pin and greedy baselines could not finish on a 12.5 m green (a 30 m shot from 15 m lands off the far side), and the first version with a 100 m shortest club looped off the grid and made the exponential utility diverge.
 
@@ -78,7 +78,7 @@ Cases in v1, with the expectations each carries (the JSON is the source of truth
 | `open-straight` | `open_straight`, `round_numbers`, tee, drop | `close` every approach to grid within 0.3; `action` every approach hits the driver from the tee |
 | `water-carry-weak` | `water_carry` 180 to 200, driver 190, tee, drop | as in the JSON above |
 | `water-carry-strong` | same hole, driver 230, tee, drop | `action` grid hits the driver; `close` grid to pin 0.1; `blowup_order` risk <= grid |
-| `ob-left` | `ob_side`, `round_numbers`, tee, drop | `action` grid `dir_deg_min` 2 (at least one step right of the pin; the OB edge is 20 m left of the tee line and the right side is only rough, so the offset is modest); `order` grid <= pin by 0.2; `action` risk `dir_deg_min` equal to grid's chosen offset |
+| `ob-left` | `ob_side`, `round_numbers`, tee, drop | `action` grid `dir_deg_min` 2 (at least one step right of the pin; the OB edge is 30 m left of the tee line and the right side is only rough, so the offset is modest); `order` grid <= pin by 0.1 (measured 0.19 on this geometry); `action` risk `dir_deg_min` equal to grid's chosen offset |
 | `bunker-front` | `bunker_front`, `round_numbers`, 120 m short of the pin in the fairway, drop | `order` grid <= pin; `close` greedy to grid 0.2 |
 | `hole-11-drop-tee` | hole 11 bundle, `player.json`, Black tee, drop | `order` grid <= pin by 0.3, grid <= centre by 0.2; `close` rollout 0.05; `blowup_order` risk <= grid |
 | `hole-11-drop-150` | hole 11, fairway point 137 m (150 yd) short of the pin, drop | `order` grid <= pin; `close` sparse2 to grid 0.1 |
@@ -92,7 +92,7 @@ Hole 12 is listed in the JSON with `"skip_unless_solved": true` and runs once `o
 - `mean_strokes`, `std_strokes`, `se_vs_grid` (standard error of the paired difference to `grid`).
 - `p_blowup` as in part 07.
 - `regret`: the approach's `mean_strokes` minus the smallest `mean_strokes` of any approach on this case.
-- `disagreement`: share of playable cells where the approach's decision differs from `grid` (point approaches evaluated at cell centres).
+- `disagreement`: share of a seeded sample of at most 100 playable cells where the approach's decision differs from `grid` (point approaches evaluated at cell centres). A sample, because the online approaches take up to a second per cell and the full set cost 17 minutes of decisions per run.
 - `build_s`: seconds to construct the policy (a solve for `grid` and `risk`, zero for the baselines).
 - `decide_s`: total seconds spent deciding during the simulation, and `decide_ms_per_shot`.
 - `passed`: list of expectation ids met, `failed`: those not met, each with the measured value.
@@ -122,7 +122,7 @@ def mcts_point_policy(solution, hole, player, mode, iters=300, c=1.0, k=2.0, alp
 # benchmark.py
 @dataclass
 class Case: id: str; hole: Hole; player: Player; start: tuple[float, float, Lie]; mode: PenaltyMode; n: int; expect: list[dict]; solution: Solution | None
-def load_cases(path: Path, out_dir: Path, ids: list[str] | None = None) -> list[Case]      # builds synthetic holes, loads real bundles, solves on demand when no bundle exists for a synthetic hole (cached in out/benchmark/solutions/)
+def load_cases(path: Path, out_dir: Path, ids: list[str] | None = None) -> list[Case]      # builds synthetic holes, loads real bundles, solves on demand when no bundle exists for a synthetic hole (cached in out/benchmark/solutions/ under the hole and player keys, since two cases can share a hole with different players)
 def simulate_points(hole, player, policy: PointPolicy, mode, n, seed, start) -> tuple[np.ndarray, float]   # continuous play via online.shots_from_point with one draw per shot; returns strokes and decide_s
 def run_case(case: Case, approaches: list[str], seed: int = 0, simulator: str = "cell") -> dict             # metrics per approach, paired draws, expectations checked
 def check_expectations(case: Case, metrics: dict, decisions: dict) -> tuple[list[str], list[dict]]
@@ -146,7 +146,7 @@ CLI: `uv run python -m caddie benchmark [--cases id,id] [--approaches id,id] [--
 
 ## Done when
 
-`uv run python -m caddie benchmark` runs every case in the fixture that has a bundle or a builder, with all eight approaches on the cell simulator and the four point-capable ones (`rollout`, `sparse2`, `mcts`, plus `grid` for reference) on the point simulator, and writes `out/benchmark/summary.md` with the ranking, one table per case, and `out/benchmark/strokes_vs_compute.png`. On the toy and synthetic cases alone it finishes in under 10 minutes on a laptop; the hole cases may take longer and are reported with their times.
+`uv run python -m caddie benchmark` runs every case in the fixture that has a bundle or a builder, with all eight approaches on the cell simulator and the four point-capable ones (`rollout`, `sparse2`, `mcts`, plus `grid` for reference) on the point simulator, and writes `out/benchmark/summary.md` with the ranking, one table per case, and `out/benchmark/strokes_vs_compute.png`. On the toy and synthetic cases alone it finishes in under 15 minutes on a laptop from a cold solution cache (measured 14 minutes with 100 plays per approach on the point simulator; the ten synthetic solves are most of it, and a warm cache cuts the run to the decisions alone); the hole cases take longer and are reported with their times.
 
 ## Pitfalls
 
