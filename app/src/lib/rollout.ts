@@ -122,3 +122,129 @@ export function recommend(
     q,
   }
 }
+
+// --- worker protocol (slice 5) ---------------------------------------------------------------
+//
+// The bundle is posted once and cached in the worker; every later request carries only the
+// player (small) and the point. The client drops stale responses: only the latest requestId
+// resolves with a result, earlier ones resolve null.
+
+export type WorkerRequest =
+  | { type: 'bundle'; bundle: HoleBundle }
+  | {
+      type: 'recommend'
+      requestId: number
+      player: Player
+      from: XY
+      lie: Lie
+      mode: Mode
+      m: number
+      seed: number
+    }
+
+export interface WorkerResponse {
+  requestId: number
+  result?: RolloutResult
+  error?: string
+}
+
+export type MessageHandler = (msg: WorkerRequest, post: (out: WorkerResponse) => void) => void
+
+/** A worker message handler with its own bundle cache, pure enough to run in-process in tests. */
+export function createHandler(): MessageHandler {
+  let cached: HoleBundle | null = null
+  return (msg, post) => {
+    if (msg.type === 'bundle') {
+      cached = msg.bundle
+      return
+    }
+    if (!cached) {
+      post({ requestId: msg.requestId, error: 'no bundle sent to the rollout worker' })
+      return
+    }
+    try {
+      const result = recommend(cached, msg.player, msg.from, msg.lie, msg.mode, msg.m, msg.seed)
+      post({ requestId: msg.requestId, result })
+    } catch (e) {
+      post({ requestId: msg.requestId, error: e instanceof Error ? e.message : String(e) })
+    }
+  }
+}
+
+/** The handler the worker entry uses (one per worker instance). */
+export const handleMessage: MessageHandler = createHandler()
+
+/** The subset of `Worker` the client uses, so tests can substitute an in-process fake. */
+export interface WorkerLike {
+  postMessage(msg: WorkerRequest): void
+  onmessage: ((e: MessageEvent<WorkerResponse>) => void) | null
+  terminate(): void
+}
+
+interface Pending {
+  resolve: (r: RolloutResult | null) => void
+  reject: (e: Error) => void
+}
+
+export class RolloutClient {
+  private worker: WorkerLike | null = null
+  private bundle: HoleBundle | null = null
+  private bundleSent: HoleBundle | null = null
+  private nextId = 1
+  private latestId = 0
+  private pending = new Map<number, Pending>()
+
+  constructor(private readonly create: () => WorkerLike) {}
+
+  private ensureWorker(): WorkerLike {
+    if (this.worker) return this.worker
+    const w = this.create()
+    w.onmessage = (e) => this.onResponse(e.data)
+    this.worker = w
+    return w
+  }
+
+  private onResponse(msg: WorkerResponse): void {
+    const p = this.pending.get(msg.requestId)
+    if (!p) return
+    this.pending.delete(msg.requestId)
+    if (msg.error !== undefined) {
+      p.reject(new Error(msg.error))
+      return
+    }
+    // stale: a newer request was posted after this one
+    p.resolve(msg.requestId === this.latestId ? (msg.result ?? null) : null)
+  }
+
+  /** Remember the bundle; it is posted lazily, once per distinct bundle object. */
+  setBundle(bundle: HoleBundle): void {
+    this.bundle = bundle
+  }
+
+  recommend(player: Player, from: XY, lie: Lie, mode: Mode, m = 100, seed = 1): Promise<RolloutResult | null> {
+    const w = this.ensureWorker()
+    if (this.bundle && this.bundle !== this.bundleSent) {
+      w.postMessage({ type: 'bundle', bundle: this.bundle })
+      this.bundleSent = this.bundle
+    }
+    const requestId = this.nextId++
+    this.latestId = requestId
+    return new Promise((resolve, reject) => {
+      this.pending.set(requestId, { resolve, reject })
+      w.postMessage({ type: 'recommend', requestId, player, from, lie, mode, m, seed })
+    })
+  }
+
+  terminate(): void {
+    this.worker?.terminate()
+    this.worker = null
+    this.bundleSent = null
+    for (const p of this.pending.values()) p.resolve(null)
+    this.pending.clear()
+  }
+}
+
+/** The real Web Worker, created with Vite's worker URL form. Browser only. */
+export function createRolloutWorker(): WorkerLike {
+  return new Worker(new URL('../workers/rollout.worker.ts', import.meta.url), { type: 'module' })
+}
