@@ -14,7 +14,16 @@ import numpy as np
 
 from caddie.dispersion import Player
 from caddie.geometry import Hole
-from caddie.mdp import DIRECTIONS_DEG, Lie, pin_bearing_deg
+from caddie.mdp import (
+    DIRECTIONS_DEG,
+    Lie,
+    PenaltyMode,
+    build_offset_tables,
+    make_draws,
+    pin_bearing_deg,
+    step_batch,
+    terminal_values,
+)
 from caddie.value_iteration import NO_ACTION, Solution
 
 log = logging.getLogger(__name__)
@@ -88,3 +97,67 @@ def centre_policy(hole: Hole, player: Player) -> Policy:
         return club, _nearest_dir_index(rel)
 
     return policy
+
+
+# --- slice 2: simulate ------------------------------------------------------------------------
+
+SIM_DRAWS = 200
+MAX_SIM_SHOTS = 40
+
+
+def simulate(
+    hole: Hole,
+    player: Player,
+    policy: Policy,
+    mode: PenaltyMode,
+    n: int,
+    seed: int,
+) -> np.ndarray:
+    """Strokes to hole out for ``n`` plays from the Black tee under ``policy``.
+
+    Cell-to-cell play with :func:`caddie.mdp.step_batch` on ``SIM_DRAWS`` Halton draws
+    built from ``seed``; each play picks one draw column per shot from a generator also
+    seeded by ``seed``, so two policies simulated with the same seed and ``n`` see the
+    same draws (paired comparison). A play ends on a green cell, adding the expected
+    putts from the cell centre, or after ``MAX_SIM_SHOTS`` shots.
+    """
+    rng = np.random.default_rng(seed)
+    draws = make_draws(SIM_DRAWS, seed)
+    tables = build_offset_tables(player, draws)
+    flat = hole.lie.reshape(-1)
+    tee = _cell_index(hole, *hole.tee_xy)
+    idx = np.full(n, tee, dtype=np.int64)
+    strokes = np.zeros(n)
+    active = np.ones(n, dtype=bool)
+    terminal = terminal_values(hole, player.putting)  # -E[putts] on green, NaN elsewhere
+    # draw columns are sampled up front so the sequence does not depend on the policy
+    columns = rng.integers(0, SIM_DRAWS, size=(MAX_SIM_SHOTS, n))
+    for shot in range(MAX_SIM_SHOTS):
+        if not active.any():
+            break
+        alive = np.flatnonzero(active)
+        cells = idx[alive]
+        lies = flat[cells]
+        actions = np.empty((alive.size, 2), dtype=np.int64)
+        for k, cell in enumerate(cells):
+            r, c = divmod(int(cell), hole.cols)
+            x, y = (c + 0.5) * hole.cell_m, (r + 0.5) * hole.cell_m
+            actions[k] = policy(x, y, Lie(int(lies[k])))
+        for club_idx, dir_idx in {tuple(a) for a in actions.tolist()}:
+            group = np.flatnonzero((actions[:, 0] == club_idx) & (actions[:, 1] == dir_idx))
+            plays = alive[group]
+            nxt, reward = step_batch(
+                hole, player, cells[group], lies[group], int(club_idx), int(dir_idx), tables, mode
+            )
+            col = columns[shot, plays]
+            rows = np.arange(group.size)
+            idx[plays] = nxt[rows, col]
+            strokes[plays] += -reward[rows, col]
+        landed_green = active & (flat[idx] == int(Lie.GREEN))
+        strokes[landed_green] += -terminal[idx[landed_green]]
+        active &= ~landed_green
+    if active.any():
+        log.warning(
+            "%d of %d plays did not hole out in %d shots", int(active.sum()), n, MAX_SIM_SHOTS
+        )
+    return strokes

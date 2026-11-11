@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from caddie.evaluate import centre_policy, optimal_policy, pin_policy
+from caddie.evaluate import centre_policy, optimal_policy, pin_policy, simulate
 from caddie.mdp import DIRECTIONS_DEG, Lie
 from caddie.value_iteration import solve
 from tests.fixtures.toy_hole import TOY_CLUB, toy_hole, toy_player
@@ -56,3 +56,33 @@ def test_optimal_policy_reads_the_solution_grids(toy_drop):
         )
     with pytest.raises(ValueError):
         policy(hole.pin_xy[0], hole.pin_xy[1], Lie.GREEN)  # terminal: no action
+
+
+# --- slice 2: simulate ------------------------------------------------------------------------
+
+
+def test_simulate_optimal_matches_the_value_grid_at_the_tee(toy_drop):
+    solution, hole, player = toy_drop
+    strokes = simulate(hole, player, optimal_policy(solution, hole), "drop", n=5000, seed=0)
+    assert strokes.shape == (5000,)
+    tee = int(hole.tee_xy[1] // hole.cell_m) * hole.cols + int(hole.tee_xy[0] // hole.cell_m)
+    assert abs(float(strokes.mean()) - float(solution.U[tee])) < 0.1
+    assert np.all(strokes >= 2.0)  # at least one shot plus the flat 1.5 putts
+
+
+def test_simulate_is_seeded_and_pairs_draws_across_policies(toy_drop):
+    solution, hole, player = toy_drop
+    a = simulate(hole, player, optimal_policy(solution, hole), "drop", n=200, seed=3)
+    b = simulate(hole, player, optimal_policy(solution, hole), "drop", n=200, seed=3)
+    np.testing.assert_array_equal(a, b)
+    c = simulate(hole, player, optimal_policy(solution, hole), "drop", n=200, seed=4)
+    assert not np.array_equal(a, c)
+
+
+def test_simulate_pin_policy_is_no_better_than_optimal(toy_drop):
+    solution, hole, player = toy_drop
+    opt = simulate(hole, player, optimal_policy(solution, hole), "replay", n=3000, seed=1)
+    pin = simulate(hole, player, pin_policy(hole, player), "replay", n=3000, seed=1)
+    assert pin.mean() >= opt.mean() - 0.05
+    # the toy brute force for "aim at the pin" under replay is about 8.3 strokes (part 04)
+    assert 6.0 < pin.mean() < 10.0
