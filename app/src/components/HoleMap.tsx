@@ -19,6 +19,7 @@ import { useEffect, useRef, useState } from 'react'
 
 import { AimArrow } from './AimArrow'
 import { BallMarker } from './BallMarker'
+import { PlayItOutLayer } from './PlayItOut'
 
 import { gridCorners, gridToLonLat } from '../lib/geo'
 import { heatmapDataUrl } from '../lib/heatmap'
@@ -220,6 +221,7 @@ export function HoleMap({ bundle, tee }: HoleMapProps) {
     <div ref={container} className="h-full w-full">
       {map && <BallMarker map={map} />}
       {map && <AimArrow map={map} />}
+      {map && <PlayItOutLayer map={map} />}
     </div>
   )
 }
