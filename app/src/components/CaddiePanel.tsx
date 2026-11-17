@@ -93,13 +93,17 @@ export interface CaddiePanelProps {
   parts?: { logger: boolean; learn: boolean; playItOut: boolean }
   /** What to say before there is a ball. */
   emptyText?: string
-  /** Shown above the lie row: the GPS notice in Play. */
+  /** Shown first in the panel: the GPS notice in Play, a hole that failed to load. */
   notice?: ReactNode
+  /** The read-only hole line: "Hole 11 · Par 4 · 342 yd · Black tees". */
+  info?: string
+  /** Last in the expanded panel: Next hole and End round. */
+  footer?: ReactNode
 }
 
 const ALL_PARTS = { logger: true, learn: true, playItOut: true }
 
-export function CaddiePanel({ parts = ALL_PARTS, emptyText = 'Tap the map to place the ball', notice }: CaddiePanelProps) {
+export function CaddiePanel({ parts = ALL_PARTS, emptyText = 'Tap the map to place the ball', notice, info, footer }: CaddiePanelProps) {
   const recommendation = useStore((s) => s.recommendation)
   const ball = useStore((s) => s.ball)
   const bundle = useStore((s) => s.bundle)
@@ -184,10 +188,19 @@ export function CaddiePanel({ parts = ALL_PARTS, emptyText = 'Tap the map to pla
       </button>
 
       {notice}
-      {lie !== null && (
-        <p className="num text-caption text-ink-2" data-testid="lie">
-          {lieLine(lie)}
-        </p>
+      {(info || lie !== null) && (
+        <div className="flex flex-col gap-0.5">
+          {info && (
+            <p className="num text-caption font-medium text-ink" data-testid="hole-line">
+              {info}
+            </p>
+          )}
+          {lie !== null && (
+            <p className="num text-caption text-ink-2" data-testid="lie">
+              {lieLine(lie)}
+            </p>
+          )}
+        </div>
       )}
       {body}
       {parts.logger && <ShotLogger />}
@@ -201,6 +214,7 @@ export function CaddiePanel({ parts = ALL_PARTS, emptyText = 'Tap the map to pla
         {parts.playItOut && <PlayItOut />}
         {parts.learn && <LearnBadge />}
         {parts.learn && <ExportLogButton />}
+        {footer}
       </div>
     </section>
   )

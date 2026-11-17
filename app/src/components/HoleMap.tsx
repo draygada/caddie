@@ -37,7 +37,8 @@ export const FIT_PADDING_PX = 24
 
 /** Fallback for the bottom sheet height on a phone, used until the sheet has rendered. */
 export const SHEET_PADDING_PX = 270
-export const TOP_BAR_PADDING_PX = 88
+/** Room at the top for the map button and the attribution; there is no top bar since part 21. */
+export const TOP_BAR_PADDING_PX = 40
 
 function isPhone(): boolean {
   return typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches
@@ -51,7 +52,7 @@ function sheetHeightPx(): number {
   return h > 0 ? h + FIT_PADDING_PX : SHEET_PADDING_PX
 }
 
-/** Padding that keeps the fitted hole clear of the floating top bar, the map buttons and the sheet. */
+/** Padding that keeps the fitted hole clear of the map button and the sheet. */
 export function fitPadding(): { top: number; bottom: number; left: number; right: number } {
   return {
     top: TOP_BAR_PADDING_PX,
@@ -203,7 +204,7 @@ export function HoleMap({ bundle, tee, parts = ALL_PARTS }: HoleMapProps) {
     })
     // bottom-right: a mouse affordance; hidden under 768 px where the user pinches
     map.addControl(new NavigationControl({ showCompass: false }), 'bottom-right')
-    // top-left under the floating top bar, so the bottom sheet never covers it on a phone
+    // top-left, so the bottom sheet never covers it on a phone
     map.addControl(new AttributionControl({ compact: true }), 'top-left')
     mapRef.current = map
     setMap(map)
@@ -278,7 +279,7 @@ export function HoleMap({ bundle, tee, parts = ALL_PARTS }: HoleMapProps) {
       {map && parts.logger && <ShotLogLayer map={map} />}
       {map && parts.gps && <GpsLayer map={map} />}
       {map && <MapLabels map={map} />}
-      <div className="absolute top-16 right-2 z-10 flex flex-col gap-2 safe-top">
+      <div className="absolute top-2 right-2 z-10 flex flex-col gap-2 safe-top">
         <MapButton label="Recenter on the hole" onClick={() => bundle && map && fitToGrid(map, bundle.meta)}>
           <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
             <circle cx="12" cy="12" r="7" />

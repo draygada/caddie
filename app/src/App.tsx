@@ -41,6 +41,8 @@ export default function App() {
   useEffect(() => {
     let cancelled = false
     setError(null)
+    // Drop the old hole at once, so nothing is shown or started on a hole that is not this one.
+    if (String(useStore.getState().bundle?.meta.hole) !== String(hole)) useStore.setState({ bundle: null, ball: null, lieOverride: null })
     loadBundle(hole, mode)
       .then((b) => {
         if (cancelled) return
@@ -59,13 +61,7 @@ export default function App() {
   }, [hole, mode])
 
   // Part 21: the home page first, every time. The bundle above keeps loading behind it.
-  if (screen === 'home') return <Home />
-  return (
-    <HoleScreen
-      screen={screen}
-      theme={theme}
-      onToggleTheme={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
-      error={error}
-    />
-  )
+  const toggleTheme = () => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))
+  if (screen === 'home') return <Home theme={theme} onToggleTheme={toggleTheme} error={error} />
+  return <HoleScreen screen={screen} error={error} />
 }
