@@ -23,7 +23,7 @@ from tests.fixtures.toy_hole import TOY_CLUB, toy_hole, toy_player
 
 
 def test_lie_codes_match_contract():
-    assert [int(v) for v in Lie] == [0, 1, 2, 3, 4, 5, 6, 7]
+    assert [int(v) for v in Lie] == [0, 1, 2, 3, 4, 5, 6, 7, 8]
     assert Lie.OUT == 0 and Lie.TEE == 1 and Lie.GREEN == 5 and Lie.OB == 7
 
 
@@ -387,3 +387,57 @@ def test_direction_zero_points_at_the_pin_from_anywhere(tables):
         after = np.hypot(x[k] - h.pin_xy[0], y[k] - h.pin_xy[1])
         assert moved.mean() > 15
         assert (after < before).mean() > 0.9
+
+
+# part 17 slice 3: lie code 8 ----------------------------------------------------
+
+
+def test_trees_lie_code_and_roll_multiplier():
+    from caddie.mdp import roll_multipliers
+
+    assert Lie.TREES == 8
+    m = roll_multipliers(toy_player())
+    assert m.shape == (9,)
+    assert m[Lie.TREES] == 0.0
+
+
+def test_tree_cells_are_neither_playable_nor_terminal():
+    from caddie.value_iteration import state_mask
+    from tests.fixtures.toy_hole import TREE_COLS, TREE_ROW, toy_tree_hole
+
+    hole = toy_tree_hole()
+    playable, terminal = state_mask(hole)
+    cells = TREE_ROW * hole.cols + np.arange(*TREE_COLS)
+    assert not playable[cells].any() and not terminal[cells].any()
+    assert int((hole.lie == Lie.TREES).sum()) == 5
+
+
+def test_locate_reports_trees():
+    from caddie.mdp import locate
+    from tests.fixtures.toy_hole import toy_tree_hole
+
+    hole = toy_tree_hole()
+    _, lie, outside = locate(hole, np.array([27.5, 27.5]), np.array([22.5, 12.5]))
+    assert lie.tolist() == [int(Lie.TREES), int(Lie.FAIRWAY)]
+    assert not outside.any()
+
+
+def test_bundle_round_trips_tree_cells(tmp_path):
+    from caddie.export import read_bundle, write_bundle
+    from caddie.value_iteration import NO_ACTION, Solution
+    from tests.fixtures.toy_hole import toy_tree_hole
+
+    hole = toy_tree_hole()
+    n = hole.rows * hole.cols
+    sol = Solution(
+        hole=0,
+        mode="drop",
+        U=np.where(hole.lie.reshape(-1) == Lie.TREES, np.nan, 3.0).astype(np.float32),
+        club=np.full(n, NO_ACTION, dtype=np.uint8),
+        dir=np.full(n, NO_ACTION, dtype=np.uint8),
+        sweeps=0,
+    )
+    write_bundle(sol, hole, toy_player(), tmp_path, label="toy")
+    _, lie, value, _, _ = read_bundle(tmp_path / "toy" / "drop")
+    assert int((lie == 8).sum()) == 5
+    assert np.isnan(value[lie == 8]).all()

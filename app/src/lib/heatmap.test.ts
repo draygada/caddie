@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { colourScale, paintHeatmap, STOPS } from './heatmap'
+import { colourScale, paintHeatmap, STOPS, TREE_RGBA } from './heatmap'
 import { readToyBundle } from './toyFiles'
 
 type RGBA = [number, number, number, number]
@@ -132,5 +132,20 @@ describe('paintHeatmap', () => {
     for (let r = 0; r < b.meta.rows; r++)
       for (let c = 0; c < b.meta.cols; c++)
         expect(pixel(canvas, c, b.meta.rows - 1 - r)).toEqual(scale(b.value[r * b.meta.cols + c]))
+  })
+})
+
+describe('tree cells (part 17)', () => {
+  it('paints lie code 8 with the tree tint, whatever the value', () => {
+    const toy = readToyBundle()
+    const lie = new Uint8Array(toy.lie)
+    lie[0] = 8 // cell (0, 0) is pixel (0, 9)
+    const b = { ...toy, lie }
+    const canvas = new FakeCanvas()
+    paintHeatmap(b, canvas as unknown as HTMLCanvasElement, colourScale(b.meta.par))
+    expect(pixel(canvas, 0, 9)).toEqual(TREE_RGBA)
+    expect(TREE_RGBA[3]).toBeGreaterThan(0)
+    expect(TREE_RGBA[3]).toBeLessThan(255)
+    expect(pixel(canvas, 1, 9)).toEqual(colourScale(b.meta.par)(b.value[1]))
   })
 })

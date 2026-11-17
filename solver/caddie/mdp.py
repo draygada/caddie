@@ -37,6 +37,7 @@ class Lie(IntEnum):
     GREEN = 5
     WATER = 6
     OB = 7
+    TREES = 8  # part 17: terrain, not a state; a ball cannot enter or pass through
 
 
 class PuttingCurve(Protocol):
@@ -149,7 +150,7 @@ def build_offset_tables(player: Player, draws: Draws) -> OffsetTables:
 # roll multiplier by landing lie; the player's lie table covers tee, fairway,
 # rough and bunker, the ball runs on the green, and water/OB/out stop it.
 def roll_multipliers(player: Player) -> np.ndarray:
-    """(8,) roll multiplier indexed by landing lie code."""
+    """(9,) roll multiplier indexed by landing lie code (0 for water, OB and trees)."""
     m = np.zeros(len(Lie))
     m[Lie.TEE] = player.lie["tee"]["roll"]
     m[Lie.FAIRWAY] = player.lie["fairway"]["roll"]

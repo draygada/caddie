@@ -83,6 +83,21 @@ def toy_hole(hazards: bool = True) -> Hole:
     )
 
 
+TREE_ROW = 4
+TREE_COLS = (3, 8)  # half-open: cols 3 to 7
+
+
+def toy_tree_hole() -> Hole:
+    """The toy hole without hazards plus a tree row (part 17): row 4, cols 3 to 7.
+
+    The row spans y 20 to 25 m and x 15 to 40 m, straight between the tee (27.5, 2.5)
+    and the pin (27.5, 47.5).
+    """
+    hole = toy_hole(hazards=False)
+    hole.lie[TREE_ROW, TREE_COLS[0] : TREE_COLS[1]] = int(Lie.TREES)
+    return hole
+
+
 MAX_SHOTS = 30
 
 
