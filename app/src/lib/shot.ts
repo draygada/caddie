@@ -25,6 +25,7 @@ const FROM_LIE_NAME: Partial<Record<Lie, LieName>> = {
   3: 'rough',
   4: 'bunker',
   5: 'fairway',
+  8: 'rough', // part 17: only the app can put a ball in the trees; it plays as rough
 }
 
 function rollMultiplier(player: Player, landingLie: Lie): number {
@@ -60,6 +61,141 @@ export function locate(b: HoleBundle, p: XY): { i: number; lie: Lie; outside: bo
   const raw = b.lie[i] as Lie
   const lie: Lie = outside || raw === 0 ? 7 : raw
   return { i, lie, outside: outside || raw === 0 }
+}
+
+// --- part 17: trees block the ball -----------------------------------------------------------
+
+export const TREE_STEP_BACK_M = 2.5
+export const RAY_STEP_M = 1
+export const RAY_MAX_M = 320
+const LIE_TREES = 8
+
+function isTree(b: HoleBundle, x: number, y: number): boolean {
+  const { rows, cols, cell_m } = b.meta
+  const r = Math.floor(y / cell_m)
+  const c = Math.floor(x / cell_m)
+  if (r < 0 || r >= rows || c < 0 || c >= cols) return false
+  return b.lie[r * cols + c] === LIE_TREES
+}
+
+/**
+ * Distance to the first tree point along the ray from `from` at absolute bearing
+ * `bearingDeg` (clockwise from +y), sampled every `RAY_STEP_M`; Infinity when none within
+ * `maxM`. A ray that starts inside a tree cell ignores trees until it leaves that clump.
+ * Same march as `first_tree_distance` in the solver's mdp.py.
+ */
+export function firstTreeDistance(b: HoleBundle, from: XY, bearingDeg: number, maxM = RAY_MAX_M): number {
+  const rad = (bearingDeg * Math.PI) / 180
+  const sx = Math.sin(rad)
+  const sy = Math.cos(rad)
+  let inStartClump = isTree(b, from.x, from.y)
+  const steps = Math.floor(maxM / RAY_STEP_M)
+  for (let k = 1; k <= steps; k++) {
+    const d = k * RAY_STEP_M
+    const tree = isTree(b, from.x + d * sx, from.y + d * sy)
+    if (inStartClump) {
+      if (tree) continue
+      inStartClump = false
+    } else if (tree) return d
+  }
+  return Infinity
+}
+
+// Flight height (part 17, amended): three estimates of ours, the same as the solver's.
+export const TREE_HEIGHT_M = 15
+export const APEX_MAX_M = 24
+export const APEX_PER_CARRY = 0.3
+export const DESCENT_STEP_M = 5
+
+/**
+ * Meters of a carry spent below the canopy at each end. The carry is a parabola with apex
+ * min(APEX_MAX_M, APEX_PER_CARRY x carry); a shot whose apex does not clear TREE_HEIGHT_M
+ * is low for its whole carry. Same formula as `low_flight_m` in the solver.
+ */
+export function lowFlightM(carry: number): number {
+  const apex = Math.min(APEX_MAX_M, APEX_PER_CARRY * carry)
+  if (apex <= TREE_HEIGHT_M) return Math.max(carry, 0)
+  return (carry * (1 - Math.sqrt(1 - TREE_HEIGHT_M / apex))) / 2
+}
+
+/** The point `TREE_STEP_BACK_M` before distance `hit` on the line, walked back out of any tree cell. */
+function restBefore(b: HoleBundle, from: XY, bearingDeg: number, hit: number): XY {
+  const rad = (bearingDeg * Math.PI) / 180
+  const sx = Math.sin(rad)
+  const sy = Math.cos(rad)
+  let d = Math.max(hit - TREE_STEP_BACK_M, 0)
+  while (d > 0 && isTree(b, from.x + d * sx, from.y + d * sy)) d = Math.max(d - TREE_STEP_BACK_M, 0)
+  return { x: from.x + d * sx, y: from.y + d * sy }
+}
+
+/**
+ * Where trees stop a carry of length `carry` from `from` along `bearingDeg`, or null when
+ * the ball gets through. Climb: any tree point within the low part of the carry. Descent:
+ * the landing point, or the points one and two DESCENT_STEP_M short of it when they are
+ * past the low part, taking the first on the line.
+ */
+function carryStop(b: HoleBundle, from: XY, bearingDeg: number, carry: number): XY | null {
+  if (carry <= 0) return null
+  const low = lowFlightM(carry)
+  const climb = firstTreeDistance(b, from, bearingDeg, low)
+  if (climb !== Infinity) return restBefore(b, from, bearingDeg, climb)
+  const rad = (bearingDeg * Math.PI) / 180
+  const sx = Math.sin(rad)
+  const sy = Math.cos(rad)
+  for (const j of [2, 1, 0]) {
+    const s = carry - j * DESCENT_STEP_M
+    if (s <= 0 || (j > 0 && s <= low)) continue
+    if (isTree(b, from.x + s * sx, from.y + s * sy)) return restBefore(b, from, bearingDeg, s)
+  }
+  return null
+}
+
+/** A mean shot counts as blocked when trees stop it in the first half of its carry. */
+const BLOCKED_FRACTION = 0.5
+
+function meanShotBlocked(b: HoleBundle, from: XY, bearingDeg: number, carry: number): boolean {
+  const stop = carryStop(b, from, bearingDeg, carry)
+  return stop !== null && Math.hypot(stop.x - from.x, stop.y - from.y) < BLOCKED_FRACTION * carry
+}
+
+/**
+ * The aim to play when following the value grid from an exact ball position. The grid's
+ * aim is solved for the cell centre; from a spot right behind a tree the same aim can run
+ * straight into it, and a ball that does so stops where it started. If the mean shot of
+ * `club` at `dirDeg`, or the shot one sigma of direction either side of it, is blocked
+ * from `from`, return the nearest 2 degree step (within plus or minus 90) where none of
+ * the three is; otherwise `dirDeg` unchanged.
+ */
+export function clearAim(b: HoleBundle, player: Player, from: XY, lie: Lie, club: string, dirDeg: number): number {
+  const params = player.clubs[club]
+  if (!params) return dirDeg
+  const mult = player.lie[FROM_LIE_NAME[lie] ?? 'fairway']
+  const carry = params.mu_c * mult.carry
+  const spread = params.sigma_theta_deg * mult.sigma
+  const bearing = pinBearingDeg(b, from)
+  // Clear means the mean shot and the shots one sigma either side of it all get through.
+  const blocked = (d: number) =>
+    [0, -spread, spread].some((off) => meanShotBlocked(b, from, bearing + d + off, carry))
+  if (!blocked(dirDeg)) return dirDeg
+  for (let step = 2; step <= 180; step += 2) {
+    for (const d of [dirDeg - step, dirDeg + step]) {
+      if (d < -90 || d > 90) continue
+      if (!blocked(d)) return d
+    }
+  }
+  return dirDeg
+}
+
+/** Where trees stop a roll of `length` from the landing point (always on the ground), or null. */
+function rollStop(b: HoleBundle, land: XY, bearingDeg: number, length: number): XY | null {
+  let hit = firstTreeDistance(b, land, bearingDeg, length)
+  if (hit === Infinity) {
+    // The end point can sit in a tree cell between two march samples.
+    const rad = (bearingDeg * Math.PI) / 180
+    if (!isTree(b, land.x + length * Math.sin(rad), land.y + length * Math.cos(rad))) return null
+    hit = length
+  }
+  return restBefore(b, land, bearingDeg, hit)
 }
 
 /**
@@ -133,7 +269,11 @@ export function sampleShot(
   const landLie = locate(b, land).lie
   const roll = (params.mu_r + params.sigma_r * rollZ) * mult.roll * rollMultiplier(player, landLie)
   const ua = ((bearing + dir_deg) * Math.PI) / 180
-  const to = { x: land.x + roll * Math.sin(ua), y: land.y + roll * Math.cos(ua) }
+  let to = { x: land.x + roll * Math.sin(ua), y: land.y + roll * Math.cos(ua) }
+  // Part 17: trees stop a ball that is below the canopy. Carry first, then the roll.
+  const stopped = carryStop(b, from, bearing + dir_deg + theta, carry)
+  if (stopped) to = stopped
+  else if (roll !== 0) to = rollStop(b, land, bearing + dir_deg + (roll < 0 ? 180 : 0), Math.abs(roll)) ?? to
   const final = locate(b, to)
   const water = final.lie === 6
   const ob = final.lie === 7

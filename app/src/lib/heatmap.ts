@@ -41,6 +41,10 @@ export function colourScale(par: number): (strokes: number) => RGBA {
   }
 }
 
+/** Tree cells (lie code 8, part 17): a translucent dark green over the satellite canopy. */
+export const TREE_RGBA: RGBA = [11, 61, 11, 150]
+const LIE_TREES = 8
+
 export type ColourScale = ReturnType<typeof colourScale>
 export type { HoleBundle }
 
@@ -63,7 +67,8 @@ export function paintHeatmap(b: HoleBundle, canvas: Canvas2D, scale: ColourScale
   for (let r = 0; r < rows; r++) {
     const y = rows - 1 - r
     for (let c = 0; c < cols; c++) {
-      const [red, green, blue, alpha] = scale(b.value[r * cols + c])
+      const i = r * cols + c
+      const [red, green, blue, alpha] = b.lie[i] === LIE_TREES ? TREE_RGBA : scale(b.value[i])
       const o = (y * cols + c) * 4
       px[o] = red
       px[o + 1] = green

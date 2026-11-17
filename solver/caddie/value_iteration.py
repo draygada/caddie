@@ -27,6 +27,7 @@ from caddie.mdp import (
     Lie,
     OffsetTables,
     PenaltyMode,
+    allowed_clubs,
     build_offset_tables,
     make_draws,
     pin_bearing_deg,
@@ -102,11 +103,14 @@ def all_actions(player: Player) -> np.ndarray:
 def club_cells(hole: Hole, player: Player, cells: np.ndarray, club_idx: int) -> np.ndarray:
     """Cells where ``club_idx`` is a candidate (Part 04 rule: mu_c <= 1.3 x distance to pin).
 
-    The shortest club is kept everywhere so no cell is left without an action.
+    A tee-only club (part 17) is a candidate on tee cells only. The shortest club is
+    kept everywhere so no cell is left without an action.
     """
     mu = np.array([player.clubs[name].mu_c for name in player.club_order])
     if club_idx == int(np.argmin(mu)):
         return cells
+    if not allowed_clubs(player, Lie.FAIRWAY)[club_idx]:
+        cells = cells[hole.lie.reshape(-1)[cells] == Lie.TEE]
     r, c = np.divmod(cells, hole.cols)
     dist = np.hypot(
         (c + 0.5) * hole.cell_m - hole.pin_xy[0], (r + 0.5) * hole.cell_m - hole.pin_xy[1]
@@ -138,17 +142,25 @@ def bellman_backup(
     bc = np.zeros(cells.shape, dtype=np.uint8)
     bd = np.zeros(cells.shape, dtype=np.uint8)
     lam = _lam(objective)
+    # Part 17: a tee-only club is backed up on the tee cells alone.
+    off_tee_ok = allowed_clubs(player, Lie.FAIRWAY)
+    tee_sel = np.flatnonzero(from_lie == Lie.TEE)
+    everywhere = np.arange(cells.size)
     for club_idx, dir_idx in candidates:
+        sel = everywhere if off_tee_ok[int(club_idx)] else tee_sel
+        if sel.size == 0:
+            continue
         nxt, r = step_batch(
-            hole, player, cells, from_lie, int(club_idx), int(dir_idx), tables, mode
+            hole, player, cells[sel], from_lie[sel], int(club_idx), int(dir_idx), tables, mode
         )
         total = r + U[nxt]
         if lam is None:
             q = total.mean(axis=1)
         else:
             q = -(logsumexp(-lam * total, axis=1) - np.log(total.shape[1])) / lam
-        better = q > best_q
-        best_q = np.where(better, q, best_q)
+        gain = q > best_q[sel]
+        better = sel[gain]
+        best_q[better] = q[gain]
         bc[better] = club_idx
         bd[better] = dir_idx
     if not np.all(np.isfinite(best_q)):

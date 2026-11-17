@@ -38,6 +38,7 @@ from caddie.mdp import (
     ob_drop_lookup,
     pin_bearing_deg,
     roll_multipliers,
+    stop_at_trees_exact,
 )
 from caddie.value_iteration import Solution
 
@@ -161,6 +162,20 @@ def shots_from_point(
     ux, uy = aim_unit(np.degrees(bearing) + dir_deg)
     run = apply_roll(land_lie, roll, player)
     fx, fy = lx + ux * run, ly + uy * run
+    # Part 17: trees stop a ball that is below the canopy.
+    fx, fy = stop_at_trees_exact(
+        hole,
+        x,
+        y,
+        np.degrees(bearing + np.arctan2(dx, dy)),
+        np.hypot(dx, dy),
+        lx,
+        ly,
+        float(np.degrees(bearing)) + dir_deg,
+        run,
+        fx,
+        fy,
+    )
     final_idx, final_lie, outside = locate(hole, fx, fy)
     water = final_lie == Lie.WATER
     ob = (final_lie == Lie.OB) | outside
@@ -203,7 +218,7 @@ def recommend(
     draws = make_draws(m, seed)
     n_clubs, n_dirs = len(player.club_order), len(DIRECTIONS_DEG)
     q = np.full((n_clubs, n_dirs), np.nan)
-    actions = candidate_actions(hole, player, (x, y))
+    actions = candidate_actions(hole, player, (x, y), from_lie)  # part 17: tee-only clubs
     for ci in np.unique(actions[:, 0]):
         club = player.clubs[player.club_order[ci]]
         for di in np.unique(actions[actions[:, 0] == ci, 1]):

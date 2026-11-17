@@ -22,13 +22,28 @@ export interface RolloutResult {
   q: Float32Array
 }
 
-/** Clubs worth evaluating from `from`: mu_c <= 1.3 x distance to the pin, shortest always kept. */
-export function candidateClubs(b: HoleBundle, player: Player, from: XY): number[] {
+/** Part 17: clubs that are only hit off a tee. */
+export const TEE_ONLY_CLUBS: readonly string[] = ['driver']
+
+/**
+ * Clubs worth evaluating from `from`: mu_c <= 1.3 x distance to the pin, and no tee-only
+ * club unless `lie` is the tee. The shortest allowed club is always kept; if nothing is
+ * allowed (a bag of tee-only clubs), the shortest club is.
+ */
+export function candidateClubs(b: HoleBundle, player: Player, from: XY, lie?: Lie): number[] {
   const pin = { x: b.meta.pin_xy[0], y: b.meta.pin_xy[1] }
   const d = distance(from, pin)
   const mus = player.club_order.map((c) => player.clubs[c].mu_c)
-  const keep = mus.map((mu, i) => (mu <= CANDIDATE_CARRY_FACTOR * d ? i : -1)).filter((i) => i >= 0)
-  if (keep.length === 0) keep.push(mus.indexOf(Math.min(...mus)))
+  const allowed = mus.map((_, i) => lie === undefined || lie === 1 || !TEE_ONLY_CLUBS.includes(player.club_order[i]))
+  const pool = allowed.some(Boolean) ? allowed : allowed.map(() => true)
+  const keep = mus.map((mu, i) => (pool[i] && mu <= CANDIDATE_CARRY_FACTOR * d ? i : -1)).filter((i) => i >= 0)
+  if (keep.length === 0) {
+    let shortest = -1
+    mus.forEach((mu, i) => {
+      if (pool[i] && (shortest < 0 || mu < mus[shortest])) shortest = i
+    })
+    keep.push(shortest)
+  }
   return keep
 }
 
@@ -81,6 +96,7 @@ export function recommend(
   m = 100,
   seed = 1,
 ): RolloutResult {
+  if (lie === 8) lie = 3 // part 17: a ball in the trees plays as rough
   if (lie === 5 || lie < 1 || lie > 5) throw new Error(`no shot from lie ${lie}`)
   const dirs = b.meta.directions_deg
   const nClubs = player.club_order.length
@@ -88,7 +104,7 @@ export function recommend(
   let best = Infinity
   let bestClub = -1
   let bestDir = -1
-  for (const ci of candidateClubs(b, player, from)) {
+  for (const ci of candidateClubs(b, player, from, lie)) {
     const club = player.club_order[ci]
     for (let di = 0; di < dirs.length; di++) {
       const v = actionValue(b, player, from, lie, club, dirs[di], mode, m, seed)

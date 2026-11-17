@@ -17,6 +17,7 @@ from pathlib import Path
 
 import numpy as np
 from pyproj import Transformer
+from scipy.ndimage import label
 from shapely import contains_xy, union_all
 from shapely.geometry import LineString, Point, Polygon, shape
 from shapely.geometry.base import BaseGeometry
@@ -154,6 +155,106 @@ def extract_hole_features(osm: dict, hole_number: int) -> dict[str, list[Polygon
     return feats
 
 
+# --- part 17: trees ------------------------------------------------------------------
+
+# Canopy radius for a mapped tree with no `diameter_crown` tag, and the half-width of a
+# tree row. Our estimate, checked against the satellite view, not a measured value.
+TREE_CROWN_RADIUS_M = 4.0
+TREE_VALUES: tuple[str, ...] = ("tree", "wood", "tree_row")
+
+
+def extract_trees(osm: dict) -> list[tuple[BaseGeometry, float]]:
+    """Every OSM tree feature as (geometry in lon/lat, canopy radius in meters).
+
+    `natural=tree` nodes are Points, `natural=wood` Polygons (multipolygons are split),
+    `natural=tree_row` LineStrings. The radius is half the `diameter_crown` tag when a
+    tree carries one, else `TREE_CROWN_RADIUS_M`; woods have radius 0.
+    """
+    out: list[tuple[BaseGeometry, float]] = []
+    for f in osm["features"]:
+        props = f["properties"]
+        kind = props.get("natural")
+        if kind not in TREE_VALUES or f["geometry"] is None:
+            continue
+        geom = shape(f["geometry"])
+        if kind == "wood":
+            out.extend((poly, 0.0) for poly in _polygons_of(geom))
+            continue
+        radius = TREE_CROWN_RADIUS_M
+        try:
+            radius = float(props["diameter_crown"]) / 2.0
+        except (KeyError, TypeError, ValueError):
+            pass
+        if (kind == "tree" and isinstance(geom, Point)) or (
+            kind == "tree_row" and isinstance(geom, LineString)
+        ):
+            out.append((geom, radius))
+    return out
+
+
+def tree_shapes_xy(
+    trees: list[tuple[BaseGeometry, float]], to_xy, bounds: tuple[float, ...] | None = None
+) -> list[Polygon]:
+    """Tree features as polygons in grid meters: discs, buffered rows, and woods.
+
+    `bounds` (minx, miny, maxx, maxy) drops shapes that cannot touch the grid.
+    """
+    shapes: list[Polygon] = []
+    for geom, radius in trees:
+        if isinstance(geom, Point):
+            moved: BaseGeometry = Point(to_xy(geom.x, geom.y)).buffer(radius)
+        elif isinstance(geom, LineString):
+            moved = LineString([to_xy(x, y) for x, y in geom.coords]).buffer(radius)
+        else:
+            moved = Polygon(
+                [to_xy(x, y) for x, y in geom.exterior.coords],
+                [[to_xy(x, y) for x, y in ring.coords] for ring in geom.interiors],
+            )
+        if bounds is not None:
+            minx, miny, maxx, maxy = moved.bounds
+            if maxx < bounds[0] or maxy < bounds[1] or minx > bounds[2] or miny > bounds[3]:
+                continue
+        if not moved.is_valid:
+            moved = moved.buffer(0)
+        shapes.extend(_polygons_of(moved))
+    return shapes
+
+
+BOXED_IN_NEIGHBOURS = 6  # of 8
+
+
+def seal_tree_pockets(lie: np.ndarray) -> np.ndarray:
+    """Turn tee, fairway, rough and bunker cells that trees box in into tree cells.
+
+    Two tests (part 17). A playable cell with no path of non-tree cells to the green
+    (4-connected) can never be left, because a ball cannot pass through a tree cell on
+    the ground. A playable cell with trees in ``BOXED_IN_NEIGHBOURS`` or more of its 8
+    neighbours can be left only rarely; this test repeats until nothing changes. Either
+    kind would make value iteration diverge or crawl. Returns a new grid.
+    """
+    trees = LIE_CODE["trees"]
+    playable_codes = [LIE_CODE[k] for k in ("tee", "fairway", "rough", "bunker")]
+    out = lie.copy()
+    while True:
+        is_tree = np.pad(out == trees, 1)
+        rows, cols = out.shape
+        around = sum(
+            is_tree[1 + dr : 1 + dr + rows, 1 + dc : 1 + dc + cols].astype(np.int32)
+            for dr in (-1, 0, 1)
+            for dc in (-1, 0, 1)
+            if (dr, dc) != (0, 0)
+        )
+        boxed = np.isin(out, playable_codes) & (around >= BOXED_IN_NEIGHBOURS)
+        if not boxed.any():
+            break
+        out[boxed] = trees
+    regions, _ = label(out != trees)
+    green = np.unique(regions[out == LIE_CODE["green"]])
+    if green.size:
+        out[np.isin(out, playable_codes) & ~np.isin(regions, green)] = trees
+    return out
+
+
 # --- slice 4: rasterize --------------------------------------------------------------
 
 # Lie codes per the root data contract. Part 04 wraps these in the `Lie` IntEnum;
@@ -167,10 +268,22 @@ LIE_CODE: dict[str, int] = {
     "green": 5,
     "water": 6,
     "ob": 7,
+    "trees": 8,
 }
 
 # Lowest priority first: a later kind overwrites an earlier one where polygons overlap.
-RASTER_PRIORITY: tuple[str, ...] = ("rough", "fairway", "tee", "green", "bunker", "ob", "water")
+# Trees (part 17) sit just above fairway and rough: they never replace a tee, green,
+# bunker, OB or water cell, and they never widen the corridor.
+RASTER_PRIORITY: tuple[str, ...] = (
+    "rough",
+    "fairway",
+    "trees",
+    "tee",
+    "green",
+    "bunker",
+    "ob",
+    "water",
+)
 
 
 def cell_centres(rows: int, cols: int, cell_m: float) -> tuple[np.ndarray, np.ndarray]:
@@ -200,7 +313,7 @@ def rasterize(
     """
     x, y = cell_centres(rows, cols, cell_m)
     lie = np.zeros((rows, cols), dtype=np.uint8)
-    everything = [p for polys in polys_xy.values() for p in polys]
+    everything = [p for kind, polys in polys_xy.items() if kind != "trees" for p in polys]
     if corridor is None and everything:
         corridor = union_all(everything).buffer(margin_m)
     if corridor is not None:
@@ -211,6 +324,8 @@ def rasterize(
         if not polys:
             continue
         covered = contains_xy(union_all(polys), x, y)
+        if kind == "trees":
+            covered &= lie != LIE_CODE["out"]
         lie[covered] = LIE_CODE[kind]
     return lie
 
@@ -442,7 +557,26 @@ def build_hole(
             "hole %d: corridor is not a single polygon, using the buffered union", hole_number
         )
         corridor = None
-    lie = rasterize(polys_xy_shapely, rows, cols, cell_m, margin_m=margin_m, corridor=corridor)
+    # Part 17: trees are rasterised but not exported as polygons (hundreds of discs).
+    tree_polys = tree_shapes_xy(
+        extract_trees(osm), to_xy, bounds=(0.0, 0.0, cols * cell_m, rows * cell_m)
+    )
+    lie = rasterize(
+        {**polys_xy_shapely, "trees": tree_polys},
+        rows,
+        cols,
+        cell_m,
+        margin_m=margin_m,
+        corridor=corridor,
+    )
+    sealed = seal_tree_pockets(lie)
+    if not np.array_equal(sealed, lie):
+        log.info(
+            "hole %d: %d cell(s) walled in by trees became trees",
+            hole_number,
+            int(np.sum(sealed != lie)),
+        )
+    lie = sealed
     tee_xy = shift((0.0, 0.0))
     pin_xy = to_xy(pin_ll.x, pin_ll.y)
     tees = label_tees(tee_polys, pin_ll, tags, to_xy)
@@ -516,7 +650,7 @@ def write_hole_geojson(hole: Hole, path: Path) -> None:
 
 _LIE_COLOURS = {
     0: "#ffffff", 1: "#3b6d11", 2: "#7ccd4a", 3: "#2e7d32", 4: "#e6d8a8",
-    5: "#b9f6ca", 6: "#4fa3e0", 7: "#d32f2f",
+    5: "#b9f6ca", 6: "#4fa3e0", 7: "#d32f2f", 8: "#0b3d0b",
 }  # fmt: skip
 
 
@@ -527,10 +661,10 @@ def write_lie_png(hole: Hole, path: Path) -> None:
     import matplotlib.pyplot as plt
     from matplotlib.colors import ListedColormap
 
-    cmap = ListedColormap([_LIE_COLOURS[i] for i in range(8)])
+    cmap = ListedColormap([_LIE_COLOURS[i] for i in range(9)])
     fig, ax = plt.subplots(figsize=(4, 4 * hole.rows / max(hole.cols, 1)))
     extent = (0, hole.cols * hole.cell_m, 0, hole.rows * hole.cell_m)
-    ax.imshow(hole.lie, cmap=cmap, vmin=-0.5, vmax=7.5, origin="lower", extent=extent)
+    ax.imshow(hole.lie, cmap=cmap, vmin=-0.5, vmax=8.5, origin="lower", extent=extent)
     ax.plot(*hole.pin_xy, "k*", ms=10, label="pin")
     for name, xy in hole.tees.items():
         ax.plot(*xy, "ko", ms=4)

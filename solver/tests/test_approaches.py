@@ -202,7 +202,9 @@ def test_mcts_hits_the_driver_near_the_pin_line_on_the_open_hole():
     sol = vi_solve(hole, player, "drop", K=200)
     point = APPROACHES["mcts"].point(hole, player, sol, "drop")
     club, deg = point(*hole.tee_xy, Lie.TEE)
-    assert club == "driver" and abs(deg) <= 6.0
+    # 8 degrees, not 6, since part 17: with the driver gone from the fairway the leaf values
+    # shift and the best of the few aims MCTS visits for the driver moved from inside 6 to 6.7.
+    assert club == "driver" and abs(deg) <= 8.0
     assert deg not in set(DIRECTIONS_DEG.tolist()) or True  # a continuous aim is allowed
 
 

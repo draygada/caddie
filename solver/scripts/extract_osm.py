@@ -1,6 +1,10 @@
 """Fetch the Stanford Golf Course features from Overpass and write GeoJSON.
 
 Usage: uv run python scripts/extract_osm.py [--out data/raw/osm_stanford.geojson]
+       uv run python scripts/extract_osm.py --trees [--from-json overpass.json]
+
+`--trees` (part 17) fetches only the tree features and appends them to the existing
+file, leaving the golf features exactly as committed so solved holes do not shift.
 
 The result is committed; this script exists to refresh it. The OSM JSON is
 converted to GeoJSON by the small converter below instead of osmtogeojson
@@ -24,6 +28,17 @@ rel(3570691); map_to_area -> .course;
 ( way["golf"](area.course); relation["golf"](area.course); way["waterway"](area.course); );
 out body; >; out skel qt;
 """
+
+# Part 17: trees, woods and tree rows in the course bounding box plus about 100 m.
+TREE_BBOX = "37.4146,-122.1936,37.4306,-122.1806"
+TREE_QUERY = f"""
+[out:json][timeout:60];
+( node["natural"="tree"]({TREE_BBOX});
+  way["natural"~"^(wood|tree_row)$"]({TREE_BBOX});
+  relation["natural"="wood"]({TREE_BBOX}); );
+out body; >; out skel qt;
+"""
+TREE_VALUES = {"tree", "wood", "tree_row"}
 
 log = logging.getLogger("extract_osm")
 
@@ -136,11 +151,42 @@ def _assemble_rings(rel: dict, ways: dict, nodes: dict, role: str) -> list[list[
     return rings
 
 
+def merge_trees(existing: dict, trees: dict) -> dict:
+    """Append the tree features of ``trees`` to ``existing``, replacing any older tree features.
+
+    Everything in ``existing`` that is not a tree feature is kept as is and in order.
+    """
+
+    def is_tree(f: dict) -> bool:
+        return f["properties"].get("natural") in TREE_VALUES
+
+    kept = [f for f in existing["features"] if not is_tree(f)]
+    seen: set[tuple[str, int]] = set()
+    added = []
+    for f in trees["features"]:
+        key = (f["properties"]["osm_type"], f["properties"]["osm_id"])
+        if is_tree(f) and key not in seen:
+            seen.add(key)
+            added.append(f)
+    return {"type": "FeatureCollection", "features": kept + added}
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, default=Path("data/raw/osm_stanford.geojson"))
+    parser.add_argument("--trees", action="store_true", help="append tree features only")
+    parser.add_argument(
+        "--from-json", type=Path, help="saved Overpass JSON to use instead of fetching"
+    )
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    if args.trees:
+        raw = json.loads(args.from_json.read_text()) if args.from_json else fetch(TREE_QUERY)
+        merged = merge_trees(json.loads(args.out.read_text()), osm_to_geojson(raw))
+        args.out.write_text(json.dumps(merged))
+        n = sum(f["properties"].get("natural") in TREE_VALUES for f in merged["features"])
+        log.info("wrote %d features (%d tree features) to %s", len(merged["features"]), n, args.out)
+        return 0
     log.info("querying Overpass")
     osm = fetch()
     gj = osm_to_geojson(osm)

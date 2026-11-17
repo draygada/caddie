@@ -5,7 +5,7 @@
  */
 import { distance, lieAt, policyAt } from './grid'
 import { mulberry32 } from './rng'
-import { expectedPutts, sampleShot } from './shot'
+import { clearAim, expectedPutts, sampleShot } from './shot'
 import type { HoleBundle, Lie, Mode, Player, XY } from './types'
 
 export const MAX_SHOTS = 12
@@ -54,8 +54,10 @@ export function playOut(b: HoleBundle, player: Player, from: XY, lie: Lie, mode:
   for (let k = 0; k < MAX_SHOTS && currentLie !== 5; k++) {
     const policy = policyAt(b, pos)
     if (!policy) break // off the hole with no action: stop
-    const s = sampleShot(b, player, pos, currentLie, policy.club, policy.dir_deg, mode, rng)
-    shots.push({ from: pos, to: { x: s.x, y: s.y }, club: policy.club, dir_deg: policy.dir_deg, lie: s.lie, reward: s.reward })
+    // Part 17: the grid's aim is for the cell centre; step off it if a tree blocks it from here.
+    const dir_deg = clearAim(b, player, pos, currentLie, policy.club, policy.dir_deg)
+    const s = sampleShot(b, player, pos, currentLie, policy.club, dir_deg, mode, rng)
+    shots.push({ from: pos, to: { x: s.x, y: s.y }, club: policy.club, dir_deg, lie: s.lie, reward: s.reward })
     strokes += -s.reward
     pos = s.next
     currentLie = s.reward === -1 ? s.lie : lieAfter(b, pos)

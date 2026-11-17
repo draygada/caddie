@@ -1,6 +1,7 @@
 /** Types for the data contract in the root CLAUDE.md. Pure TypeScript, no React. */
 
-export type Lie = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7
+/** Lie codes from the root data contract; 8 is trees (part 17). */
+export type Lie = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8
 export type Mode = 'mulligan' | 'drop' | 'replay'
 
 export interface NIG {

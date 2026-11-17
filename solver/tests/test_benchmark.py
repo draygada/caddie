@@ -30,8 +30,11 @@ def test_open_straight_is_a_fairway_with_rough_shoulders_and_a_round_green():
     green = hole.lie == int(Lie.GREEN)
     assert green.sum() == 16  # the 4 x 4 block of centres within 12.5 m of (60, 330)
     rest = hole.lie[~green]
-    assert set(np.unique(rest).tolist()) == {int(Lie.FAIRWAY), int(Lie.ROUGH)}
-    assert np.all(hole.lie[:60, 6:18] == int(Lie.FAIRWAY))
+    assert set(np.unique(rest).tolist()) == {int(Lie.TEE), int(Lie.FAIRWAY), int(Lie.ROUGH)}
+    assert hole.lie[0, 12] == int(Lie.TEE)  # part 17: the one tee cell, where the driver is allowed
+    fairway = hole.lie[:60, 6:18].copy()
+    fairway[0, 6] = int(Lie.FAIRWAY)  # column 12 of the hole is column 6 of this slice
+    assert np.all(fairway == int(Lie.FAIRWAY))
     assert np.all(hole.lie[:, :6] == int(Lie.ROUGH)) and np.all(hole.lie[:, 18:] == int(Lie.ROUGH))
     assert abs(hole.pin_xy[0] - 60.0) < 1e-9 and abs(hole.pin_xy[1] - 330.0) < 1e-9
     assert hole.tee_xy == (60.0, 2.5)
@@ -49,7 +52,9 @@ def test_water_carry_band_rows_are_water_across_the_full_width():
 def test_ob_side_columns():
     hole = ob_side()
     assert np.all(hole.lie[:, 0:6] == int(Lie.OB))
-    below_green = hole.lie[:60]
+    below_green = hole.lie[:60].copy()
+    assert below_green[0, 12] == int(Lie.TEE)
+    below_green[0, 12] = int(Lie.FAIRWAY)
     assert np.all(below_green[:, 6:18] == int(Lie.FAIRWAY))
     assert np.all(below_green[:, 18:] == int(Lie.ROUGH))
 

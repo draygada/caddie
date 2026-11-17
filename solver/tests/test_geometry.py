@@ -1,6 +1,7 @@
 """Tests for caddie.geometry (part 01)."""
 
 import json
+import math
 from pathlib import Path
 
 import numpy as np
@@ -357,3 +358,206 @@ def test_build_hole_merges_traced_water_ob_and_pin(tmp_path):
     lon, lat = to_lonlat(*unrotate(*h.pin_xy, h.rotation_deg), h.origin_lon, h.origin_lat)
     assert abs(lon - traced_pin[0]) < 1e-6 and abs(lat - traced_pin[1]) < 1e-6
     assert "water" in h.polygons_xy and "ob" in h.polygons_xy
+
+
+# part 17 slice 1: trees from OSM ---------------------------------------------
+
+
+def _extract_osm():
+    import importlib.util
+
+    path = Path(__file__).resolve().parents[1] / "scripts" / "extract_osm.py"
+    spec = importlib.util.spec_from_file_location("extract_osm", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+TREE_OSM = {
+    "elements": [
+        {"type": "node", "id": 1, "lat": 37.42, "lon": -122.18, "tags": {"natural": "tree"}},
+        {"type": "node", "id": 2, "lat": 37.4200, "lon": -122.1810},
+        {"type": "node", "id": 3, "lat": 37.4205, "lon": -122.1810},
+        {"type": "node", "id": 4, "lat": 37.4205, "lon": -122.1805},
+        {"type": "way", "id": 10, "nodes": [2, 3, 4, 2], "tags": {"natural": "wood"}},
+        {"type": "way", "id": 11, "nodes": [2, 3, 4], "tags": {"natural": "tree_row"}},
+    ]
+}
+
+
+def test_tree_query_asks_for_trees_woods_and_tree_rows():
+    q = _extract_osm().TREE_QUERY
+    assert '"natural"="tree"' in q
+    assert "wood" in q and "tree_row" in q
+
+
+def test_converter_handles_tree_features():
+    gj = _extract_osm().osm_to_geojson(TREE_OSM)
+    by_id = {f["properties"]["osm_id"]: f for f in gj["features"]}
+    assert by_id[1]["geometry"]["type"] == "Point"
+    assert by_id[10]["geometry"]["type"] == "Polygon"
+    assert by_id[11]["geometry"]["type"] == "LineString"
+    assert set(by_id) == {1, 10, 11}  # untagged nodes give no feature
+
+
+def test_merge_trees_appends_once_and_keeps_existing_features():
+    mod = _extract_osm()
+    existing = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": None,
+                "properties": {"golf": "green", "osm_type": "way", "osm_id": 99},
+            }
+        ],
+    }
+    trees = mod.osm_to_geojson(TREE_OSM)
+    merged = mod.merge_trees(existing, trees)
+    assert merged["features"][0]["properties"]["osm_id"] == 99
+    assert len(merged["features"]) == 4
+    again = mod.merge_trees(merged, trees)
+    assert len(again["features"]) == 4
+
+
+def test_committed_osm_has_trees(osm):
+    assert len(_features(osm, "natural", "tree")) > 1000
+    assert len(_features(osm, "natural", "wood")) > 20
+    assert len(_features(osm, "natural", "tree_row")) >= 5
+    assert len(_features(osm, "golf", "green")) == 29  # the golf features are untouched
+
+
+# part 17 slice 2: rasterise trees ----------------------------------------------
+
+
+def test_tree_shapes_buffer_nodes_and_rows_and_keep_woods():
+    from caddie.geometry import TREE_CROWN_RADIUS_M, extract_trees, tree_shapes_xy
+
+    mod = _extract_osm()
+    gj = mod.osm_to_geojson(TREE_OSM)
+    feats = extract_trees(gj)
+    assert len(feats) == 3
+
+    def to_xy(lon, lat):  # a local flat frame, meters
+        return ((lon + 122.18) * 88000.0, (lat - 37.42) * 111320.0)
+
+    shapes = tree_shapes_xy(feats, to_xy)
+    areas = sorted(s.area for s in shapes)
+    assert TREE_CROWN_RADIUS_M == 4.0
+    disc = math.pi * TREE_CROWN_RADIUS_M**2
+    assert any(abs(a - disc) / disc < 0.02 for a in areas)  # the tree node
+    wood = 0.5 * (0.0005 * 111320.0) * (0.0005 * 88000.0)  # the triangle
+    assert any(abs(a - wood) / wood < 0.01 for a in areas)
+    length = 0.0005 * 111320.0 + 0.0005 * 88000.0  # the row is two sides of the triangle
+    row = 2 * TREE_CROWN_RADIUS_M * length + disc
+    assert any(abs(a - row) / row < 0.03 for a in areas)
+
+
+def test_rasterize_trees_overwrite_fairway_and_rough_only():
+    from shapely.geometry import Point as P
+    from shapely.geometry import box
+
+    from caddie.geometry import LIE_CODE, rasterize
+
+    polys = {
+        "fairway": [box(0, 0, 50, 50)],
+        "bunker": [box(20, 20, 30, 30)],
+        "green": [box(40, 40, 50, 50)],
+        "trees": [
+            P(10, 10).buffer(4.0),  # on a cell corner in the fairway: the 4 cells around it
+            P(25, 25).buffer(4.0),  # inside the bunker: stays bunker
+            P(45, 45).buffer(4.0),  # on the green: stays green
+            P(500, 500).buffer(4.0),  # far outside: not part of the corridor
+        ],
+    }
+    lie = rasterize(polys, rows=12, cols=12, cell_m=5.0, margin_m=5.0)
+    assert LIE_CODE["trees"] == 8
+    trees = {tuple(rc) for rc in np.argwhere(lie == LIE_CODE["trees"])}
+    assert trees == {(1, 1), (1, 2), (2, 1), (2, 2)}
+    assert lie[5, 5] == LIE_CODE["bunker"]
+    assert lie[9, 9] == LIE_CODE["green"]
+    without = rasterize({k: v for k, v in polys.items() if k != "trees"}, 12, 12, 5.0, margin_m=5.0)
+    assert np.array_equal(lie == 0, without == 0)  # trees never widen the corridor
+
+
+def test_tree_in_rough_margin_becomes_trees():
+    from shapely.geometry import Point as P
+    from shapely.geometry import box
+
+    from caddie.geometry import LIE_CODE, rasterize
+
+    polys = {"fairway": [box(20, 0, 30, 50)], "trees": [P(12.5, 22.5).buffer(4.0)]}
+    lie = rasterize(polys, rows=10, cols=10, cell_m=5.0, margin_m=15.0)
+    assert lie[4, 2] == LIE_CODE["trees"]
+    assert lie[4, 1] == LIE_CODE["rough"]
+
+
+def test_hole_11_has_tree_cells_and_keeps_its_fairway_shape(tmp_path):
+    from caddie.geometry import LIE_CODE
+
+    hole = _hole(11, tmp_path)
+    n_trees = int(np.sum(hole.lie == LIE_CODE["trees"]))
+    assert n_trees > 50
+    assert int(np.sum(hole.lie == LIE_CODE["green"])) > 0
+    assert hole.lie[hole.lie == LIE_CODE["trees"]].size < 0.5 * np.sum(hole.lie > 0)
+
+
+# part 17 slice 5: no playable cell may be walled in by trees -----------------------
+
+
+def test_seal_tree_pockets_turns_walled_in_cells_into_trees():
+    from caddie.geometry import LIE_CODE, seal_tree_pockets
+
+    f, t, g = LIE_CODE["fairway"], LIE_CODE["trees"], LIE_CODE["green"]
+    lie = np.full((7, 7), f, dtype=np.uint8)
+    lie[6, 3] = g
+    lie[1:4, 1:4] = t
+    lie[2, 2] = LIE_CODE["rough"]  # walled in on all four sides
+    sealed = seal_tree_pockets(lie)
+    assert sealed[2, 2] == t
+    untouched = np.ones_like(lie, dtype=bool)
+    untouched[2, 2] = False
+    assert np.array_equal(sealed[untouched], lie[untouched])
+    assert np.array_equal(lie[2, 2], LIE_CODE["rough"])  # the input is not modified
+
+
+def test_seal_tree_pockets_leaves_open_holes_alone():
+    from caddie.geometry import LIE_CODE, seal_tree_pockets
+
+    lie = np.full((5, 5), LIE_CODE["rough"], dtype=np.uint8)
+    lie[4, 2] = LIE_CODE["green"]
+    lie[2, 1:4] = LIE_CODE["trees"]  # a row with open ends
+    assert np.array_equal(seal_tree_pockets(lie), lie)
+    assert np.array_equal(
+        seal_tree_pockets(np.full((3, 3), LIE_CODE["fairway"], dtype=np.uint8)),
+        np.full((3, 3), LIE_CODE["fairway"], dtype=np.uint8),
+    )
+
+
+@pytest.mark.parametrize("number", [10, 11, 12])
+def test_built_holes_have_no_playable_cell_cut_off_from_the_green(number, tmp_path):
+    from scipy.ndimage import label
+
+    from caddie.geometry import LIE_CODE
+
+    hole = _hole(number, tmp_path)
+    regions, _ = label(hole.lie != LIE_CODE["trees"])
+    green = np.unique(regions[hole.lie == LIE_CODE["green"]])
+    playable = np.isin(hole.lie, [LIE_CODE[k] for k in ("tee", "fairway", "rough", "bunker")])
+    assert not np.any(playable & ~np.isin(regions, green))
+
+
+def test_seal_tree_pockets_fills_nearly_boxed_in_cells():
+    from caddie.geometry import LIE_CODE, seal_tree_pockets
+
+    f, t, g = LIE_CODE["fairway"], LIE_CODE["trees"], LIE_CODE["green"]
+    lie = np.full((7, 7), f, dtype=np.uint8)
+    lie[6, 3] = g
+    lie[1:4, 1:4] = t
+    lie[2, 2] = f  # the pocket
+    lie[1, 2] = f  # a one-cell mouth, so the pocket is connected to the green
+    sealed = seal_tree_pockets(lie)
+    assert sealed[2, 2] == t  # 7 of 8 neighbours are trees
+    assert sealed[1, 2] == f  # the mouth is a notch in the edge (5 tree neighbours): left alone
+    assert sealed[0, 2] == f
+    assert int((sealed == t).sum()) == 8

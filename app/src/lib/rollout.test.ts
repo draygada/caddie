@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest'
 
 import { cellOf, centreOf, policyAt, valueNearest } from './grid'
 import { mulberry32 } from './rng'
-import { recommend } from './rollout'
+import { candidateClubs, recommend, TEE_ONLY_CLUBS } from './rollout'
 import { readToyBundle, toyPlayerDoc } from './toyFiles'
-import type { Lie } from './types'
+import type { Lie, Player } from './types'
 
 const b = readToyBundle()
 const player = toyPlayerDoc()
@@ -77,5 +77,42 @@ describe('recommend parity with the policy grid (toy bundle, m = 400)', () => {
     const rough = recommend(b, player, { x: 12, y: 17 }, 3, 'drop', 400, 2)
     expect(rough.expected_strokes).toBeGreaterThan(fw.expected_strokes)
     expect(cellOf(b, { x: 12, y: 17 }).i).toBeGreaterThan(0)
+  })
+})
+
+describe('tee-only driver (part 17)', () => {
+  const toy = readToyBundle()
+  const base = toyPlayerDoc()
+  const bag: Player = {
+    ...base,
+    clubs: {
+      driver: { ...base.clubs.test7i, mu_c: 30 },
+      test7i: base.clubs.test7i,
+    },
+    club_order: ['driver', 'test7i'],
+  }
+  const far = { x: 27.5, y: 2.5 } // 45 m from the pin: both clubs pass the 1.3 x distance rule
+
+  it('lists the driver from a tee lie only', () => {
+    expect(TEE_ONLY_CLUBS).toEqual(['driver'])
+    expect(candidateClubs(toy, bag, far, 1)).toEqual([0, 1])
+    for (const lie of [2, 3, 4] as Lie[]) expect(candidateClubs(toy, bag, far, lie)).toEqual([1])
+  })
+
+  it('keeps the shortest club when the driver was the only candidate', () => {
+    const onlyDriver: Player = { ...bag, clubs: { driver: bag.clubs.driver }, club_order: ['driver'] }
+    expect(candidateClubs(toy, onlyDriver, far, 2)).toEqual([0])
+  })
+
+  it('leaves a bag without a driver alone', () => {
+    expect(candidateClubs(toy, base, far, 2)).toEqual(candidateClubs(toy, base, far, 1))
+  })
+
+  it('recommend never returns the driver off the fairway, and plays trees as rough', () => {
+    const fairway = recommend(toy, bag, far, 2, 'drop', 20, 1)
+    expect(fairway.club).toBe('test7i')
+    const tee = recommend(toy, bag, far, 1, 'drop', 20, 1)
+    expect(['driver', 'test7i']).toContain(tee.club)
+    expect(recommend(toy, bag, far, 8, 'drop', 20, 1)).toEqual(recommend(toy, bag, far, 3, 'drop', 20, 1))
   })
 })
