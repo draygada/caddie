@@ -1,6 +1,7 @@
 """Tests for caddie.geometry (part 01)."""
 
 import json
+import math
 from pathlib import Path
 
 import numpy as np
@@ -424,3 +425,78 @@ def test_committed_osm_has_trees(osm):
     assert len(_features(osm, "natural", "wood")) > 20
     assert len(_features(osm, "natural", "tree_row")) >= 5
     assert len(_features(osm, "golf", "green")) == 29  # the golf features are untouched
+
+
+# part 17 slice 2: rasterise trees ----------------------------------------------
+
+
+def test_tree_shapes_buffer_nodes_and_rows_and_keep_woods():
+    from caddie.geometry import TREE_CROWN_RADIUS_M, extract_trees, tree_shapes_xy
+
+    mod = _extract_osm()
+    gj = mod.osm_to_geojson(TREE_OSM)
+    feats = extract_trees(gj)
+    assert len(feats) == 3
+
+    def to_xy(lon, lat):  # a local flat frame, meters
+        return ((lon + 122.18) * 88000.0, (lat - 37.42) * 111320.0)
+
+    shapes = tree_shapes_xy(feats, to_xy)
+    areas = sorted(s.area for s in shapes)
+    assert TREE_CROWN_RADIUS_M == 4.0
+    disc = math.pi * TREE_CROWN_RADIUS_M**2
+    assert any(abs(a - disc) / disc < 0.02 for a in areas)  # the tree node
+    wood = 0.5 * (0.0005 * 111320.0) * (0.0005 * 88000.0)  # the triangle
+    assert any(abs(a - wood) / wood < 0.01 for a in areas)
+    length = 0.0005 * 111320.0 + 0.0005 * 88000.0  # the row is two sides of the triangle
+    row = 2 * TREE_CROWN_RADIUS_M * length + disc
+    assert any(abs(a - row) / row < 0.03 for a in areas)
+
+
+def test_rasterize_trees_overwrite_fairway_and_rough_only():
+    from shapely.geometry import Point as P
+    from shapely.geometry import box
+
+    from caddie.geometry import LIE_CODE, rasterize
+
+    polys = {
+        "fairway": [box(0, 0, 50, 50)],
+        "bunker": [box(20, 20, 30, 30)],
+        "green": [box(40, 40, 50, 50)],
+        "trees": [
+            P(10, 10).buffer(4.0),  # on a cell corner in the fairway: the 4 cells around it
+            P(25, 25).buffer(4.0),  # inside the bunker: stays bunker
+            P(45, 45).buffer(4.0),  # on the green: stays green
+            P(500, 500).buffer(4.0),  # far outside: not part of the corridor
+        ],
+    }
+    lie = rasterize(polys, rows=12, cols=12, cell_m=5.0, margin_m=5.0)
+    assert LIE_CODE["trees"] == 8
+    trees = {tuple(rc) for rc in np.argwhere(lie == LIE_CODE["trees"])}
+    assert trees == {(1, 1), (1, 2), (2, 1), (2, 2)}
+    assert lie[5, 5] == LIE_CODE["bunker"]
+    assert lie[9, 9] == LIE_CODE["green"]
+    without = rasterize({k: v for k, v in polys.items() if k != "trees"}, 12, 12, 5.0, margin_m=5.0)
+    assert np.array_equal(lie == 0, without == 0)  # trees never widen the corridor
+
+
+def test_tree_in_rough_margin_becomes_trees():
+    from shapely.geometry import Point as P
+    from shapely.geometry import box
+
+    from caddie.geometry import LIE_CODE, rasterize
+
+    polys = {"fairway": [box(20, 0, 30, 50)], "trees": [P(12.5, 22.5).buffer(4.0)]}
+    lie = rasterize(polys, rows=10, cols=10, cell_m=5.0, margin_m=15.0)
+    assert lie[4, 2] == LIE_CODE["trees"]
+    assert lie[4, 1] == LIE_CODE["rough"]
+
+
+def test_hole_11_has_tree_cells_and_keeps_its_fairway_shape(tmp_path):
+    from caddie.geometry import LIE_CODE
+
+    hole = _hole(11, tmp_path)
+    n_trees = int(np.sum(hole.lie == LIE_CODE["trees"]))
+    assert n_trees > 50
+    assert int(np.sum(hole.lie == LIE_CODE["green"])) > 0
+    assert hole.lie[hole.lie == LIE_CODE["trees"]].size < 0.5 * np.sum(hole.lie > 0)
