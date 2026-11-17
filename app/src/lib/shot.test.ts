@@ -4,7 +4,7 @@ import fixture from '../../../docs/fixtures/shot_samples.json'
 import treeRays from '../../../docs/fixtures/tree_rays.json'
 import { cellOf } from './grid'
 import { mulberry32 } from './rng'
-import { expectedPutts, firstTreeDistance, lowFlightM, sampleShot, TREE_STEP_BACK_M } from './shot'
+import { clearAim, expectedPutts, firstTreeDistance, lowFlightM, sampleShot, TREE_STEP_BACK_M } from './shot'
 import { readToyBundle, toyPlayerDoc } from './toyFiles'
 import type { Lie, Mode } from './types'
 
@@ -264,5 +264,32 @@ describe('flight height (part 17, amended)', () => {
     expect(s.y).toBeLessThan(100)
     expect(s.y).toBeGreaterThanOrEqual(95)
     expect(s.lie).toBe(2)
+  })
+})
+
+describe('clearAim: a grid aim that is blocked from the exact ball position (part 17)', () => {
+  const toy = readToyBundle()
+  const trees = { ...toy, lie: Uint8Array.from(treeRays.lie) }
+  const behind = { x: 27.5, y: 17 } // 3 m short of the row (y 20 to 25, x 15 to 40)
+
+  it('keeps an aim whose mean shot gets through', () => {
+    expect(clearAim(trees, player, { x: 7.5, y: 2.5 }, 2, 'test7i', -24)).toBe(-24)
+    expect(clearAim(trees, player, { x: 27.5, y: 32.5 }, 2, 'test7i', 0)).toBe(0) // past the row
+  })
+
+  it('moves a blocked aim to the nearest direction step that is clear by one sigma', () => {
+    const aim = clearAim(trees, player, behind, 2, 'test7i', 0)
+    // atan(12.5 / 3) is 76.5 degrees to the end of the row, plus one sigma (4 degrees) of clearance
+    expect(Math.abs(aim)).toBeGreaterThanOrEqual(80)
+    expect(Math.abs(aim)).toBeLessThanOrEqual(84)
+    expect(Math.abs(aim % 2)).toBe(0) // still one of the 2 degree steps
+    const s = sampleShot(trees, player, behind, 2, 'test7i', aim, 'drop', () => 0.5)
+    expect(Math.hypot(s.x - behind.x, s.y - behind.y)).toBeGreaterThan(12)
+  })
+
+  it('returns the original aim when nothing is clear', () => {
+    const boxed = { ...trees, lie: Uint8Array.from(treeRays.lie) }
+    for (let r = 2; r <= 4; r++) for (let c = 4; c <= 6; c++) if (!(r === 3 && c === 5)) boxed.lie[r * 10 + c] = 8
+    expect(clearAim(boxed, player, { x: 27.5, y: 17.5 }, 2, 'test7i', 0)).toBe(0)
   })
 })

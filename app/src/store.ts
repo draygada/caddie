@@ -7,6 +7,7 @@ import { create } from 'zustand'
 
 import { lieAt, policyAt, valueNearest } from './lib/grid'
 import { createRolloutWorker, RolloutClient, type RolloutResult } from './lib/rollout'
+import { clearAim } from './lib/shot'
 import type { HoleBundle, Lie, Mode, Player, XY } from './lib/types'
 
 export type HoleId = 10 | 11 | 12 | 'toy'
@@ -88,13 +89,20 @@ export const useStore = create<State>()((set, get) => ({
 // --- derived recommendation (M1: a direct grid lookup) -------------------------------------
 
 /** Grid recommendation at `ball`, or null on terminal and out-of-grid cells. */
-export function gridRecommendation(bundle: HoleBundle | null, ball: XY | null): Recommendation | null {
+export function gridRecommendation(
+  bundle: HoleBundle | null,
+  ball: XY | null,
+  player: Player | null = null,
+  lie: Lie | null = null,
+): Recommendation | null {
   if (!bundle || !ball) return null
   const policy = policyAt(bundle, ball)
   if (!policy) return null
+  // Part 17: the grid's aim is for the cell centre; step off it if a tree blocks it from here.
+  const dir_deg = player ? clearAim(bundle, player, ball, lie ?? lieAt(bundle, ball), policy.club, policy.dir_deg) : policy.dir_deg
   return {
     club: policy.club,
-    dir_deg: policy.dir_deg,
+    dir_deg,
     expected_strokes: valueNearest(bundle, ball),
     source: 'grid',
   }
@@ -132,7 +140,7 @@ useStore.subscribe((state, prev) => {
     state.useWorker === prev.useWorker
   )
     return
-  const grid = gridRecommendation(state.bundle, state.ball)
+  const grid = gridRecommendation(state.bundle, state.ball, state.player, state.lieOverride)
   state.setRecommendation(grid)
   const { bundle, ball, player, mode } = state
   if (!state.useWorker || !rolloutClient || !bundle || !ball || !player || !grid) return

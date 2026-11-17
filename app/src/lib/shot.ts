@@ -150,6 +150,42 @@ function carryStop(b: HoleBundle, from: XY, bearingDeg: number, carry: number): 
   return null
 }
 
+/** A mean shot counts as blocked when trees stop it in the first half of its carry. */
+const BLOCKED_FRACTION = 0.5
+
+function meanShotBlocked(b: HoleBundle, from: XY, bearingDeg: number, carry: number): boolean {
+  const stop = carryStop(b, from, bearingDeg, carry)
+  return stop !== null && Math.hypot(stop.x - from.x, stop.y - from.y) < BLOCKED_FRACTION * carry
+}
+
+/**
+ * The aim to play when following the value grid from an exact ball position. The grid's
+ * aim is solved for the cell centre; from a spot right behind a tree the same aim can run
+ * straight into it, and a ball that does so stops where it started. If the mean shot of
+ * `club` at `dirDeg`, or the shot one sigma of direction either side of it, is blocked
+ * from `from`, return the nearest 2 degree step (within plus or minus 90) where none of
+ * the three is; otherwise `dirDeg` unchanged.
+ */
+export function clearAim(b: HoleBundle, player: Player, from: XY, lie: Lie, club: string, dirDeg: number): number {
+  const params = player.clubs[club]
+  if (!params) return dirDeg
+  const mult = player.lie[FROM_LIE_NAME[lie] ?? 'fairway']
+  const carry = params.mu_c * mult.carry
+  const spread = params.sigma_theta_deg * mult.sigma
+  const bearing = pinBearingDeg(b, from)
+  // Clear means the mean shot and the shots one sigma either side of it all get through.
+  const blocked = (d: number) =>
+    [0, -spread, spread].some((off) => meanShotBlocked(b, from, bearing + d + off, carry))
+  if (!blocked(dirDeg)) return dirDeg
+  for (let step = 2; step <= 180; step += 2) {
+    for (const d of [dirDeg - step, dirDeg + step]) {
+      if (d < -90 || d > 90) continue
+      if (!blocked(d)) return d
+    }
+  }
+  return dirDeg
+}
+
 /** Where trees stop a roll of `length` from the landing point (always on the ground), or null. */
 function rollStop(b: HoleBundle, land: XY, bearingDeg: number, length: number): XY | null {
   let hit = firstTreeDistance(b, land, bearingDeg, length)
