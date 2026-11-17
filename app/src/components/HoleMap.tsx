@@ -17,10 +17,9 @@ import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url'
 import type { Feature as GJFeature, FeatureCollection, Geometry } from 'geojson'
 import { type ReactNode, useEffect, useRef, useState } from 'react'
 
-import { AimArrow } from './AimArrow'
+import { AimTarget } from './AimTarget'
 import { BallMarker } from './BallMarker'
 import { GpsLayer } from './GpsBadge'
-import { MapLabels } from './MapLabels'
 import { PlayItOutLayer } from './PlayItOut'
 import { ShotLogLayer } from './ShotLogger'
 
@@ -274,11 +273,10 @@ export function HoleMap({ bundle, tee, parts = ALL_PARTS }: HoleMapProps) {
   return (
     <div ref={container} className="h-full w-full">
       {map && <BallMarker map={map} />}
-      {map && <AimArrow map={map} />}
+      {map && <AimTarget map={map} />}
       {map && parts.playItOut && <PlayItOutLayer map={map} />}
       {map && parts.logger && <ShotLogLayer map={map} />}
       {map && parts.gps && <GpsLayer map={map} />}
-      {map && <MapLabels map={map} />}
       <div className="absolute top-2 right-2 z-10 flex flex-col gap-2 safe-top">
         <MapButton label="Recenter on the hole" onClick={() => bundle && map && fitToGrid(map, bundle.meta)}>
           <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">

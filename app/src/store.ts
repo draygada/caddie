@@ -6,10 +6,10 @@
 import { create } from 'zustand'
 import { createJSONStorage, persist, type StateStorage } from 'zustand/middleware'
 
-import { TARGET_RESET_M } from './lib/aim'
+import { type Aim, resolveAim, TARGET_RESET_M } from './lib/aim'
 import { lieAt, policyAt, valueNearest } from './lib/grid'
 import { learnedPlayer, type Observation } from './lib/learn'
-import { createRolloutWorker, RolloutClient, type RolloutResult } from './lib/rollout'
+import { type ActionOutcome, actionOutcome, createRolloutWorker, RolloutClient, type RolloutResult } from './lib/rollout'
 import { clearAim, pinBearingDeg } from './lib/shot'
 import { type LoggedShot, logKey, toObservation } from './lib/shotLog'
 import type { HoleBundle, Lie, Mode, Player, XY } from './lib/types'
@@ -296,6 +296,48 @@ useStore.subscribe((state, prev) => {
     Math.hypot(state.ball.x - aimedFrom.x, state.ball.y - aimedFrom.y) > TARGET_RESET_M
   if (state.bundle !== prev.bundle || state.ball === null || moved) state.resetAim()
 })
+
+type AimInputs = Pick<State, 'bundle' | 'player' | 'ball' | 'lieOverride' | 'recommendation' | 'target' | 'aimClub' | 'mode'>
+
+let aimMemo: { key: unknown[]; aim: Aim | null } | null = null
+let outcomeMemo: { aim: Aim; key: unknown[]; outcome: ActionOutcome } | null = null
+
+function sameKey(a: unknown[], b: unknown[]): boolean {
+  return a.length === b.length && a.every((v, i) => v === b[i])
+}
+
+/**
+ * The aim in force: the caddie's until the player moves the target or picks a club. Null
+ * when there is no shot to aim (no ball, on the green, in a hazard). Memoised on its inputs,
+ * so it is safe as a Zustand selector.
+ */
+export function currentAim(s: AimInputs): Aim | null {
+  const key = [s.bundle, s.player, s.ball, s.lieOverride, s.recommendation, s.target, s.aimClub]
+  if (aimMemo && sameKey(aimMemo.key, key)) return aimMemo.aim
+  let aim: Aim | null = null
+  const { bundle, player, ball, recommendation } = s
+  if (bundle && player && ball && recommendation && recommendation.club in player.clubs) {
+    const lie = s.lieOverride ?? lieAt(bundle, ball)
+    if ((lie >= 1 && lie <= 4) || lie === 8) aim = resolveAim(bundle, player, ball, lie, recommendation, s.target, s.aimClub)
+  }
+  aimMemo = { key, aim }
+  return aim
+}
+
+export const OUTCOME_DRAWS = 200
+
+/** What is likely for the aim in force: 200 shots from the player's distribution. */
+export function currentOutcome(s: AimInputs): ActionOutcome | null {
+  const aim = currentAim(s)
+  const { bundle, player, ball } = s
+  if (!aim || !bundle || !player || !ball) return null
+  const key = [bundle, player, ball, s.lieOverride, s.mode]
+  if (outcomeMemo && outcomeMemo.aim === aim && sameKey(outcomeMemo.key, key)) return outcomeMemo.outcome
+  const lie = s.lieOverride ?? lieAt(bundle, ball)
+  const outcome = actionOutcome(bundle, player, ball, lie, aim.club, aim.dir_deg, s.mode, OUTCOME_DRAWS, 1)
+  outcomeMemo = { aim, key, outcome }
+  return outcome
+}
 
 // --- part 15: learning from the log ------------------------------------------------------------
 
