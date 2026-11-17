@@ -1,10 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { gridToLonLat } from '../lib/geo'
 import { readToyBundle } from '../lib/toyFiles'
 import type { XY } from '../lib/types'
 import { initialState, useStore } from '../store'
-import { type GeoLike, GPS_OPTIONS, startGps, useGpsStatus } from './useGps'
+import { type GeoLike, GPS_HOLD_MS, GPS_OPTIONS, MIN_MOVE_M, startGps, useGpsStatus } from './useGps'
 
 type Success = (p: { coords: { longitude: number; latitude: number; accuracy: number } }) => void
 type Failure = (e: { message: string }) => void
@@ -99,6 +99,82 @@ describe('startGps', () => {
     const stop = startGps({ ...f.geo, watchPosition: (s) => ((success = s), 7) })
     success!({ coords: { longitude: lon, latitude: lat, accuracy: 4 } })
     expect(useStore.getState().gps).toBeNull()
+    stop()
+  })
+})
+
+describe('follow rule', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(1_000_000)
+  })
+  afterEach(() => vi.useRealTimers())
+
+  /** What BallMarker does on every gps write: put the ball there. */
+  function follow() {
+    return useStore.subscribe((s, prev) => {
+      if (s.gps && s.gps !== prev.gps) s.setBall({ x: s.gps.x, y: s.gps.y })
+    })
+  }
+
+  it('a manual ball move blocks gps writes for 10 s, then fixes flow again', () => {
+    const f = fakeGeo()
+    const unfollow = follow()
+    const stop = startGps(f.geo)
+    f.fix({ x: 20, y: 10 })
+    expect(useStore.getState().ball!.x).toBeCloseTo(20, 3)
+
+    useStore.getState().setBall({ x: 30, y: 30 }) // the player drags or taps the ball
+    vi.advanceTimersByTime(GPS_HOLD_MS - 1)
+    f.fix({ x: 25, y: 12 })
+    expect(useStore.getState().ball).toEqual({ x: 30, y: 30 })
+    expect(useStore.getState().gps!.x).toBeCloseTo(20, 3)
+
+    vi.advanceTimersByTime(1)
+    f.fix({ x: 25, y: 12 })
+    expect(useStore.getState().ball!.x).toBeCloseTo(25, 3)
+    stop()
+    unfollow()
+  })
+
+  it('the ball following a fix does not count as a manual move', () => {
+    const f = fakeGeo()
+    const unfollow = follow()
+    const stop = startGps(f.geo)
+    f.fix({ x: 20, y: 10 })
+    f.fix({ x: 25, y: 12 })
+    expect(useStore.getState().ball!.x).toBeCloseTo(25, 3)
+    stop()
+    unfollow()
+  })
+
+  it('a fix off the grid clears gps, leaves the ball, and flags outside', () => {
+    const f = fakeGeo()
+    const unfollow = follow()
+    const stop = startGps(f.geo)
+    f.fix({ x: 20, y: 10 })
+    f.fix({ x: -40, y: 10 })
+    expect(useStore.getState().gps).toBeNull()
+    expect(useStore.getState().ball!.x).toBeCloseTo(20, 3)
+    expect(useGpsStatus.getState().outside).toBe(true)
+    f.fix({ x: 21, y: 30 })
+    expect(useGpsStatus.getState().outside).toBe(false)
+    expect(useStore.getState().gps!.y).toBeCloseTo(30, 3)
+    stop()
+    unfollow()
+  })
+
+  it('ignores jitter under MIN_MOVE_M unless the accuracy changed', () => {
+    const f = fakeGeo()
+    const stop = startGps(f.geo)
+    f.fix({ x: 20, y: 10 }, 5)
+    const first = useStore.getState().gps
+    f.fix({ x: 20 + MIN_MOVE_M / 2, y: 10 }, 5)
+    expect(useStore.getState().gps).toBe(first)
+    f.fix({ x: 20 + MIN_MOVE_M / 2, y: 10 }, 9)
+    expect(useStore.getState().gps!.accuracy_m).toBe(9)
+    f.fix({ x: 20 + MIN_MOVE_M * 2, y: 10 }, 9)
+    expect(useStore.getState().gps!.x).toBeCloseTo(20 + MIN_MOVE_M * 2, 3)
     stop()
   })
 })
