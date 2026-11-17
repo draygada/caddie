@@ -4,7 +4,8 @@ import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
 
-import { updateClubStats, updateIg, updateNig } from './learn'
+import { paramsFromStats, PRIOR_KAPPA, statsFromParams, updateClubStats, updateIg, updateNig } from './learn'
+import { toyPlayerDoc } from './toyFiles'
 import type { ClubStats } from './types'
 
 interface Fixture {
@@ -49,5 +50,40 @@ describe('conjugate updates (port of solver dispersion.py)', () => {
 
   it('updateIg adds half a shot and half the squared angle', () => {
     expect(updateIg({ alpha: 2.5, beta: 10 }, 4)).toEqual({ alpha: 3, beta: 18 })
+  })
+})
+
+describe('statsFromParams and paramsFromStats', () => {
+  const player = toyPlayerDoc()
+
+  it('round trips every club to its point estimates to 1e-9', () => {
+    for (const id of player.club_order) {
+      const c = player.clubs[id]
+      const back = paramsFromStats(statsFromParams(c), c.p)
+      for (const k of ['mu_c', 'sigma_theta_deg', 'sigma_d', 'mu_r', 'sigma_r', 'p'] as const)
+        expect(Math.abs(back[k] - c[k])).toBeLessThan(1e-9)
+    }
+  })
+
+  it('is a prior worth kappa pseudo-shots, 5 by default, with no shots counted', () => {
+    const c = player.clubs[player.club_order[1]]
+    const s = statsFromParams(c)
+    expect(s.n).toBe(0)
+    expect(s.carry.kappa).toBe(PRIOR_KAPPA)
+    expect(s.roll.kappa).toBe(5)
+    expect(s.carry.alpha).toBe(2.5)
+    expect(statsFromParams(c, 8).carry.kappa).toBe(8)
+    expect(statsFromParams(c, 8).theta.alpha).toBe(4)
+  })
+
+  it('matches the solver on the fixture: posterior means after five shots', () => {
+    const p = paramsFromStats(fx.after[4], 0.1)
+    const s = fx.after[4]
+    expect(p.mu_c).toBe(s.carry.m)
+    expect(p.sigma_d).toBeCloseTo(Math.sqrt(s.carry.beta / (s.carry.alpha - 1)) / s.carry.m, 12)
+    expect(p.sigma_theta_deg).toBeCloseTo(Math.sqrt(s.theta.beta / (s.theta.alpha - 1)), 12)
+    expect(p.sigma_r).toBeCloseTo(Math.sqrt(s.roll.beta / (s.roll.alpha - 1)), 12)
+    expect(p.p).toBe(0.1)
+    expect(p.stats).toBe(s)
   })
 })
