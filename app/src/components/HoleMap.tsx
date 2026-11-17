@@ -1,10 +1,10 @@
 /**
- * Satellite map of the hole with the strokes-to-go heatmap and the hole polygons.
+ * Satellite map of the hole with the hole polygons. The strokes-to-go heatmap was removed
+ * from the app in part 21.
  * Until the store exists (part 11) the bundle comes in as a prop from App.
  */
 import {
   AttributionControl,
-  type ImageSource,
   type ExpressionSpecification,
   type GeoJSONSource,
   Map as MLMap,
@@ -24,8 +24,7 @@ import { MapLabels } from './MapLabels'
 import { PlayItOutLayer } from './PlayItOut'
 import { ShotLogLayer } from './ShotLogger'
 
-import { frameZoom, gridCorners, gridToLonLat, holeFrame } from '../lib/geo'
-import { heatmapDataUrl } from '../lib/heatmap'
+import { frameZoom, gridToLonLat, holeFrame } from '../lib/geo'
 import { whenStyleReady } from '../lib/mapReady'
 import { token } from '../lib/tokens'
 import type { HoleBundle, Meta, XY } from '../lib/types'
@@ -34,7 +33,6 @@ export const ESRI_TILES =
   'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
 export const ESRI_ATTRIBUTION = 'Esri, Maxar, Earthstar Geographics'
 export const MAX_ZOOM = 19
-export const HEAT_OPACITY = 0.55
 export const FIT_PADDING_PX = 24
 
 /** Fallback for the bottom sheet height on a phone, used until the sheet has rendered. */
@@ -84,7 +82,7 @@ const POLYGON_KINDS = ['fairway', 'rough', 'green', 'bunker', 'water', 'ob', 'te
 export function lieColours(): Record<string, string> {
   return Object.fromEntries(POLYGON_KINDS.map((k) => [k, token(`--t-${k}`)]))
 }
-/** Terrain fills never exceed 35 percent; 25 keeps fairway edges legible over the heatmap. */
+/** Terrain fills never exceed 35 percent; 25 keeps fairway edges legible. */
 export const TERRAIN_FILL_OPACITY = 0.25
 
 type Feature = GJFeature<Geometry, { kind: string }>
@@ -149,15 +147,6 @@ const STYLE: StyleSpecification = {
   layers: [{ id: 'esri', type: 'raster', source: 'esri' }],
 }
 
-const HEAT_KEY = 'caddie.heat'
-function readHeatOn(): boolean {
-  try {
-    return localStorage.getItem(HEAT_KEY) !== 'off'
-  } catch {
-    return true
-  }
-}
-
 /** 48 px map button on the panel surface; `pressed` fills it for a toggle that is on. */
 function MapButton({
   label,
@@ -200,7 +189,6 @@ export function HoleMap({ bundle, tee, parts = ALL_PARTS }: HoleMapProps) {
   const mapRef = useRef<MLMap | null>(null)
   const [map, setMap] = useState<MLMap | null>(null)
   const teeRef = useRef(tee)
-  const [heatOn, setHeatOn] = useState<boolean>(readHeatOn)
 
   // Mount once.
   useEffect(() => {
@@ -226,25 +214,11 @@ export function HoleMap({ bundle, tee, parts = ALL_PARTS }: HoleMapProps) {
     }
   }, [])
 
-  // Heatmap image source: added once, then updated in place on bundle change.
+  // Terrain outlines and the tee and pin marks: added once, then updated on bundle change.
   useEffect(() => {
     const map = mapRef.current
     if (!map || !bundle) return
     const apply = () => {
-      const url = heatmapDataUrl(bundle)
-      const coordinates = gridCorners(bundle.meta)
-      const heat = map.getSource('heat') as ImageSource | undefined
-      if (heat) {
-        heat.updateImage({ url, coordinates })
-      } else {
-        map.addSource('heat', { type: 'image', url, coordinates })
-        map.addLayer({
-          id: 'heat',
-          type: 'raster',
-          source: 'heat',
-          paint: { 'raster-opacity': HEAT_OPACITY, 'raster-resampling': 'nearest' },
-        })
-      }
       const polys = polygonFeatures(bundle.meta)
       const polySource = map.getSource('polys') as GeoJSONSource | undefined
       if (polySource) {
@@ -284,20 +258,6 @@ export function HoleMap({ bundle, tee, parts = ALL_PARTS }: HoleMapProps) {
     return whenStyleReady(map, apply)
   }, [bundle])
 
-  // Heatmap on or off: remembered per device (docs/design.md section 9).
-  useEffect(() => {
-    try {
-      localStorage.setItem(HEAT_KEY, heatOn ? 'on' : 'off')
-    } catch {
-      /* private mode */
-    }
-    const map = mapRef.current
-    if (!map) return
-    return whenStyleReady(map, () => {
-      if (map.getLayer('heat')) map.setLayoutProperty('heat', 'visibility', heatOn ? 'visible' : 'none')
-    })
-  }, [heatOn, bundle])
-
   // Pin and the selected tee.
   useEffect(() => {
     teeRef.current = tee
@@ -319,17 +279,6 @@ export function HoleMap({ bundle, tee, parts = ALL_PARTS }: HoleMapProps) {
       {map && parts.gps && <GpsLayer map={map} />}
       {map && <MapLabels map={map} />}
       <div className="absolute top-16 right-2 z-10 flex flex-col gap-2 safe-top">
-        <MapButton
-          label={heatOn ? 'Hide strokes-to-go heatmap' : 'Show strokes-to-go heatmap'}
-          pressed={heatOn}
-          onClick={() => setHeatOn((v) => !v)}
-        >
-          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" aria-hidden="true">
-            <path d="M12 3 2 8l10 5 10-5-10-5Z" />
-            <path d="m2 12 10 5 10-5" />
-            <path d="m2 16 10 5 10-5" />
-          </svg>
-        </MapButton>
         <MapButton label="Recenter on the hole" onClick={() => bundle && map && fitToGrid(map, bundle.meta)}>
           <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
             <circle cx="12" cy="12" r="7" />

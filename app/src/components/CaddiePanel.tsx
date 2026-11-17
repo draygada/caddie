@@ -1,13 +1,12 @@
 /**
  * The caddie panel: a bottom sheet on a phone (collapsed shows the detected lie and the
- * three numbers; expanded adds the aim description and the heatmap legend) and a 360 px column
+ * three numbers; expanded adds the aim description) and a 360 px column
  * docked right on wider screens. Reads the store only. The Play it out button lives in
  * PlayItOut (part 13 slices 5 and 6) and mounts in the expanded area.
  */
 import { type ReactNode, useState } from 'react'
 
 import { lieAt, valueNearest } from '../lib/grid'
-import { rampGradientCss } from '../lib/heatmap'
 import { clubDisplayName, MODE_LABEL } from '../lib/tokens'
 import type { Lie, LieName, Meta, Player, XY } from '../lib/types'
 import { useStore } from '../store'
@@ -167,7 +166,6 @@ export function CaddiePanel({ parts = ALL_PARTS, emptyText = 'Tap the map to pla
     body = <p className="text-body text-ink-2">No shot from here: off the hole.</p>
   }
 
-  const par = bundle?.meta.par ?? 4
 
   return (
     <section
@@ -200,15 +198,6 @@ export function CaddiePanel({ parts = ALL_PARTS, emptyText = 'Tap the map to pla
             {aimText(offsetYd)}
           </p>
         )}
-        <div className="flex flex-col gap-1">
-          <span className="label">Strokes to go</span>
-          <div className="h-3 w-full rounded" style={{ background: rampGradientCss() }} aria-hidden="true" />
-          <div className="num flex justify-between text-caption text-ink-2">
-            <span>{par - 1}</span>
-            <span>par {par}</span>
-            <span>{par + 3}</span>
-          </div>
-        </div>
         {parts.playItOut && <PlayItOut />}
         {parts.learn && <LearnBadge />}
         {parts.learn && <ExportLogButton />}
