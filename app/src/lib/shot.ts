@@ -28,7 +28,8 @@ const FROM_LIE_NAME: Partial<Record<Lie, LieName>> = {
   8: 'rough', // part 17: only the app can put a ball in the trees; it plays as rough
 }
 
-function rollMultiplier(player: Player, landingLie: Lie): number {
+/** Roll multiplier of the lie the ball lands on; hazards and trees give no roll. */
+export function rollMultiplier(player: Player, landingLie: Lie): number {
   switch (landingLie) {
     case 1:
       return player.lie.tee.roll

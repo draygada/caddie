@@ -370,3 +370,217 @@ def test_stats_updates_fixture_shape():
         assert s.n == after["n"]
         assert abs(s.carry.m - after["carry"]["m"]) < 1e-9
         assert abs(s.theta.beta - after["theta"]["beta"]) < 1e-9
+
+
+# part 15 -------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def course_fixture():
+    return json.loads((FIXTURES / "course_log.json").read_text())
+
+
+@pytest.fixture()
+def course_log_path(course_fixture, tmp_path):
+    path = tmp_path / "caddie-log.json"
+    path.write_text(json.dumps(course_fixture["log"]))
+    return path
+
+
+def _toy():
+    from tests.fixtures.toy_hole import toy_hole, toy_player
+
+    return toy_hole(), toy_player()
+
+
+def _assert_json_close(a, b, where="doc"):
+    if isinstance(a, dict):
+        assert isinstance(b, dict) and a.keys() == b.keys(), where
+        for k in a:
+            _assert_json_close(a[k], b[k], f"{where}.{k}")
+    elif isinstance(a, list):
+        assert isinstance(b, list) and len(a) == len(b), where
+        for k, (x, y) in enumerate(zip(a, b, strict=True)):
+            _assert_json_close(x, y, f"{where}[{k}]")
+    elif isinstance(a, float) or isinstance(b, float):
+        assert a == pytest.approx(b, abs=1e-9), where
+    else:
+        assert a == b, where
+
+
+def test_course_log_fixture_is_reproducible(tmp_path):
+    from caddie.dispersion import write_course_log_fixture
+
+    hole, player = _toy()
+    regenerated = tmp_path / "course_log.json"
+    write_course_log_fixture(regenerated, hole, player)
+    committed = json.loads((FIXTURES / "course_log.json").read_text())
+    # Not exact equality: sin, cos and arctan differ in the last bit between platforms.
+    _assert_json_close(committed, json.loads(regenerated.read_text()))
+
+
+def test_course_log_fixture_shape(course_fixture):
+    assert len(course_fixture["log"]["shots"]) == 20
+    assert set(course_fixture["skipped"].values()) == {
+        "penalty",
+        "accuracy",
+        "green",
+        "aim",
+        "open",
+    }
+    learned = sum(len(v) for v in course_fixture["observations"].values())
+    assert learned == 20 - len(course_fixture["skipped"])
+    stored = [s for s in course_fixture["log"]["shots"] if "endLie" in s]
+    assert 0 < len(stored) < 20  # both the stored lie and the grid lookup are exercised
+
+
+def test_load_course_log_matches_fixture(course_fixture, course_log_path):
+    from caddie.dispersion import load_course_log
+    from caddie.export import player_from_json
+
+    hole, _ = _toy()
+    player = player_from_json(course_fixture["player"])
+    got = load_course_log(course_log_path, hole, player)
+    assert set(got) == set(course_fixture["observations"])
+    for club, rows in course_fixture["observations"].items():
+        np.testing.assert_allclose(np.array(got[club]), np.array(rows), rtol=0, atol=1e-9)
+
+
+def test_course_observation_by_hand():
+    """Straight 30 m, 2 m mean roll on fairway: carry 28, no lateral; 3 m right keeps theta."""
+    from caddie.dispersion import _course_observation, course_shot_skip_reason
+
+    hole, player = _toy()
+    shot = {
+        "start": {"x": 27.5, "y": 2.5},
+        "end": {"x": 27.5, "y": 32.5},
+        "startAcc": 3.0,
+        "endAcc": 4.0,
+        "lie": 2,
+        "club": "test7i",
+        "aimDeg": 0.0,
+        "recAimDeg": 0.0,
+        "t": 0,
+        "outcome": "normal",
+    }
+    assert course_shot_skip_reason(shot, hole, player) is None
+    carry, total, lateral = _course_observation(shot, hole, player)
+    assert (carry, total, lateral) == pytest.approx((28.0, 30.0, 0.0))
+    shot["end"] = {"x": 30.5, "y": 32.5}
+    carry, total, lateral = _course_observation(shot, hole, player)
+    assert total == pytest.approx(np.hypot(3.0, 30.0))
+    assert np.degrees(np.arctan2(lateral, carry)) == pytest.approx(
+        np.degrees(np.arctan2(3.0, 30.0))
+    )
+    shot["end"] = {"x": 27.5, "y": 3.5}  # shorter than the mean roll
+    assert course_shot_skip_reason(shot, hole, player) == "short"
+    shot["endLie"] = 4  # bunker: no roll, so the whole metre is carry
+    assert course_shot_skip_reason(shot, hole, player) is None
+
+
+def test_stats_from_params_round_trip():
+    from caddie.dispersion import params_from_stats, stats_from_params
+
+    _, player = _toy()
+    cp = player.clubs["test7i"]
+    stats = stats_from_params(cp)
+    assert stats.n == 0 and stats.carry.kappa == 5.0 and stats.theta.alpha == 2.5
+    back = params_from_stats(stats)
+    assert back == pytest.approx(
+        (cp.mu_c, cp.sigma_theta_deg, cp.sigma_d, cp.mu_r, cp.sigma_r), abs=1e-9
+    )
+
+
+def _clubs_json(player) -> dict:
+    from dataclasses import asdict
+
+    return {name: asdict(cp) for name, cp in player.clubs.items()}
+
+
+def test_fold_course_shots_changes_exactly_the_clubs_hit(course_fixture, course_log_path):
+    from caddie.dispersion import fold_course_shots, load_course_log
+    from caddie.export import player_from_json
+
+    hole, _ = _toy()
+    player = player_from_json(course_fixture["player"])
+    before = _clubs_json(player)
+    learned = fold_course_shots(player, load_course_log(course_log_path, hole, player))
+    assert _clubs_json(player) == before  # the input player is untouched
+    after = _clubs_json(learned)
+    changed = {c for c in after if after[c] != before[c]}
+    assert changed == set(course_fixture["observations"]) == {"test7i", "testsw"}
+    for club in changed:
+        assert learned.clubs[club].p == player.clubs[club].p
+        assert learned.clubs[club].sampled == player.clubs[club].sampled
+        want = course_fixture["after"][club]
+        got = after[club]["stats"]
+        assert (
+            got["n"]
+            == want["n"]
+            == len(course_fixture["observations"][club]) + (before[club]["stats"] or {"n": 0})["n"]
+        )
+        for part in ("carry", "theta", "roll"):
+            for key, value in want[part].items():
+                assert got[part][key] == pytest.approx(value, abs=1e-9)
+    assert learned.lie == player.lie
+
+
+def test_fold_course_shots_with_nothing_to_learn(course_fixture):
+    from caddie.dispersion import fold_course_shots
+    from caddie.export import player_from_json
+
+    player = player_from_json(course_fixture["player"])
+    assert _clubs_json(fold_course_shots(player, {})) == _clubs_json(player)
+    stray = {"putter": [(1.0, 1.0, 0.0)]}
+    assert _clubs_json(fold_course_shots(player, stray)) == _clubs_json(player)
+
+
+def test_cli_fit_course_log_changes_exactly_the_clubs_hit(tmp_path):
+    """`fit --course-log` folds an exported log in after the simulator shots (part 15)."""
+    from caddie.cli import SOLVER_DIR, main
+
+    def shot(club, start, end, **over):
+        return {
+            "start": {"x": start[0], "y": start[1]},
+            "end": {"x": end[0], "y": end[1]},
+            "startAcc": 4.0,
+            "endAcc": 0.0,
+            "lie": 2,
+            "club": club,
+            "aimDeg": 0.0,
+            "recAimDeg": 0.0,
+            "t": 0,
+            "outcome": "normal",
+            **over,
+        }
+
+    shots = [
+        shot("sw30", (27.5, 2.5), (27.5, 30.0)),
+        shot("sw30", (22.5, 2.5), (24.0, 33.0)),
+        shot("sw50", (27.5, 2.5), (27.5, 44.0), outcome="green", endLie=5),
+        shot("7i", (27.5, 2.5), (27.5, 40.0), outcome="penalty"),
+    ]
+    log_a, log_b = tmp_path / "a.json", tmp_path / "b.json"
+    log_a.write_text(json.dumps({"version": 1, "hole": "toy", "shots": shots[:2]}))
+    log_b.write_text(json.dumps({"version": 1, "hole": "toy", "shots": shots[2:]}))
+    fit = [
+        "fit",
+        "--shots",
+        str(SOLVER_DIR / "tests" / "fixtures" / "shots_fixture.csv"),
+        "--putting",
+        str(SOLVER_DIR / "data" / "raw" / "putting.csv"),
+    ]
+    assert main([*fit, "--out", str(tmp_path / "base")]) == 0
+    with_logs = [*fit, "--course-log", str(log_a), "--course-log", str(log_b)]
+    assert main([*with_logs, "--out", str(tmp_path / "course")]) == 0
+    base = json.loads((tmp_path / "base" / "player.json").read_text())
+    course = json.loads((tmp_path / "course" / "player.json").read_text())
+    changed = {c for c in base["clubs"] if base["clubs"][c] != course["clubs"][c]}
+    assert changed == {"sw30", "sw50"}
+    assert course["clubs"]["sw30"]["stats"]["n"] == 2
+    assert course["clubs"]["sw50"]["stats"]["n"] == 1
+    assert course["clubs"]["sw30"]["sampled"] is False
+    assert course["clubs"]["sw30"]["p"] == base["clubs"]["sw30"]["p"]
+    assert {k: v for k, v in course.items() if k != "clubs"} == {
+        k: v for k, v in base.items() if k != "clubs"
+    }

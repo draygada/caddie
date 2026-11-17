@@ -11,8 +11,10 @@ import { rampGradientCss } from '../lib/heatmap'
 import { clubDisplayName, MODE_LABEL } from '../lib/tokens'
 import type { Lie, LieName, Meta, Player, XY } from '../lib/types'
 import { useStore } from '../store'
+import { LearnBadge } from './LearnBadge'
 import { LieButtons } from './LieButtons'
 import { PlayItOut } from './PlayItOut'
+import { ExportLogButton, ShotLogger } from './ShotLogger'
 
 export const M_PER_YD = 0.9144
 
@@ -158,6 +160,7 @@ export function CaddiePanel() {
 
       <LieButtons />
       {body}
+      <ShotLogger />
 
       <div id="caddie-details" className={`${expanded ? 'flex' : 'hidden'} flex-col gap-3 pb-2 md:flex`}>
         {recommendation && offsetYd !== null && (
@@ -175,6 +178,8 @@ export function CaddiePanel() {
           </div>
         </div>
         <PlayItOut />
+        <LearnBadge />
+        <ExportLogButton />
       </div>
     </section>
   )

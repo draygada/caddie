@@ -1,0 +1,666 @@
+{
+  "player": {
+    "handicap": 15,
+    "clubs": {
+      "test7i": {
+        "mu_c": 25.0,
+        "sigma_theta_deg": 4.0,
+        "sigma_d": 0.05,
+        "p": 0.05,
+        "mu_r": 2.0,
+        "sigma_r": 1.0,
+        "sampled": true,
+        "stats": {
+          "n": 0,
+          "carry": {
+            "m": 25.0,
+            "kappa": 5.0,
+            "alpha": 2.5,
+            "beta": 2.34375
+          },
+          "theta": {
+            "alpha": 2.5,
+            "beta": 24.0
+          },
+          "roll": {
+            "m": 2.0,
+            "kappa": 5.0,
+            "alpha": 2.5,
+            "beta": 1.5
+          }
+        }
+      },
+      "testsw": {
+        "mu_c": 15.0,
+        "sigma_theta_deg": 4.0,
+        "sigma_d": 0.05,
+        "p": 0.05,
+        "mu_r": 1.0,
+        "sigma_r": 1.0,
+        "sampled": false,
+        "stats": null
+      },
+      "test5i": {
+        "mu_c": 35.0,
+        "sigma_theta_deg": 4.0,
+        "sigma_d": 0.05,
+        "p": 0.05,
+        "mu_r": 2.0,
+        "sigma_r": 1.0,
+        "sampled": false,
+        "stats": null
+      }
+    },
+    "club_order": [
+      "test7i",
+      "testsw",
+      "test5i"
+    ],
+    "lie": {
+      "tee": {
+        "carry": 1.0,
+        "sigma": 1.0,
+        "roll": 1.0
+      },
+      "fairway": {
+        "carry": 1.0,
+        "sigma": 1.0,
+        "roll": 1.0
+      },
+      "rough": {
+        "carry": 0.9,
+        "sigma": 1.3,
+        "roll": 0.5
+      },
+      "bunker": {
+        "carry": 0.8,
+        "sigma": 1.6,
+        "roll": 0.0
+      }
+    },
+    "putting": {
+      "distance_m": [
+        1
+      ],
+      "expected_putts": [
+        1.5
+      ]
+    }
+  },
+  "log": {
+    "version": 1,
+    "hole": "toy",
+    "shots": [
+      {
+        "start": {
+          "x": 30.01,
+          "y": 7.53
+        },
+        "end": {
+          "x": 29.25,
+          "y": 32.65
+        },
+        "startAcc": 1.3,
+        "endAcc": 6.5,
+        "lie": 2,
+        "club": "test7i",
+        "aimDeg": -3.7,
+        "recAimDeg": -3.7,
+        "t": 1794900000000,
+        "outcome": "normal"
+      },
+      {
+        "start": {
+          "x": 20.98,
+          "y": 4.66
+        },
+        "end": {
+          "x": 27.05,
+          "y": 19.77
+        },
+        "startAcc": 5.0,
+        "endAcc": 8.5,
+        "lie": 2,
+        "club": "testsw",
+        "aimDeg": 11.4,
+        "recAimDeg": 11.4,
+        "t": 1794900060000,
+        "outcome": "normal",
+        "endLie": 2
+      },
+      {
+        "start": {
+          "x": 12.48,
+          "y": 8.11
+        },
+        "end": {
+          "x": 12.51,
+          "y": 37.9
+        },
+        "startAcc": 8.5,
+        "endAcc": 3.0,
+        "lie": 2,
+        "club": "test7i",
+        "aimDeg": -2.6,
+        "recAimDeg": -2.6,
+        "t": 1794900120000,
+        "outcome": "normal",
+        "endLie": 6
+      },
+      {
+        "start": {
+          "x": 35.62,
+          "y": 4.74
+        },
+        "end": {
+          "x": 39.98,
+          "y": 21.42
+        },
+        "startAcc": 3.3,
+        "endAcc": 5.3,
+        "lie": 2,
+        "club": "testsw",
+        "aimDeg": 11.2,
+        "recAimDeg": 11.2,
+        "t": 1794900180000,
+        "outcome": "penalty"
+      },
+      {
+        "start": {
+          "x": 18.46,
+          "y": 7.4
+        },
+        "end": {
+          "x": 14.97,
+          "y": 32.53
+        },
+        "startAcc": 2.2,
+        "endAcc": 3.2,
+        "lie": 2,
+        "club": "test7i",
+        "aimDeg": -5.8,
+        "recAimDeg": -5.8,
+        "t": 1794900240000,
+        "outcome": "normal",
+        "endLie": 2
+      },
+      {
+        "start": {
+          "x": 16.47,
+          "y": 3.08
+        },
+        "end": {
+          "x": 12.33,
+          "y": 19.99
+        },
+        "startAcc": 4.2,
+        "endAcc": 3.8,
+        "lie": 2,
+        "club": "testsw",
+        "aimDeg": -7.2,
+        "recAimDeg": -7.2,
+        "t": 1794900300000,
+        "outcome": "normal",
+        "endLie": 2
+      },
+      {
+        "start": {
+          "x": 35.39,
+          "y": 1.71
+        },
+        "end": {
+          "x": 36.2,
+          "y": 25.44
+        },
+        "startAcc": 7.0,
+        "endAcc": 14.0,
+        "lie": 2,
+        "club": "test7i",
+        "aimDeg": 3.0,
+        "recAimDeg": 3.0,
+        "t": 1794900360000,
+        "outcome": "normal"
+      },
+      {
+        "start": {
+          "x": 37.38,
+          "y": 7.2
+        },
+        "end": {
+          "x": 38.5,
+          "y": 25.25
+        },
+        "startAcc": 7.7,
+        "endAcc": 3.7,
+        "lie": 2,
+        "club": "testsw",
+        "aimDeg": 8.9,
+        "recAimDeg": 8.9,
+        "t": 1794900420000,
+        "outcome": "normal",
+        "endLie": 2
+      },
+      {
+        "start": {
+          "x": 34.65,
+          "y": 8.31
+        },
+        "end": {
+          "x": 35.54,
+          "y": 37.25
+        },
+        "startAcc": 9.0,
+        "endAcc": 4.1,
+        "lie": 2,
+        "club": "test7i",
+        "aimDeg": -3.5,
+        "recAimDeg": -3.5,
+        "t": 1794900480000,
+        "outcome": "normal",
+        "endLie": 2
+      },
+      {
+        "start": {
+          "x": 17.22,
+          "y": 3.07
+        },
+        "end": {
+          "x": 17.53,
+          "y": 21.42
+        },
+        "startAcc": 0.5,
+        "endAcc": 4.2,
+        "lie": 5,
+        "club": "testsw",
+        "aimDeg": -2.8,
+        "recAimDeg": -2.8,
+        "t": 1794900540000,
+        "outcome": "normal"
+      },
+      {
+        "start": {
+          "x": 37.95,
+          "y": 4.23
+        },
+        "end": {
+          "x": 34.46,
+          "y": 29.7
+        },
+        "startAcc": 1.8,
+        "endAcc": 2.3,
+        "lie": 2,
+        "club": "test7i",
+        "aimDeg": -6.9,
+        "recAimDeg": -6.9,
+        "t": 1794900600000,
+        "outcome": "normal",
+        "endLie": 2
+      },
+      {
+        "start": {
+          "x": 19.97,
+          "y": 4.66
+        },
+        "end": {
+          "x": 16.61,
+          "y": 21.23
+        },
+        "startAcc": 0.2,
+        "endAcc": 4.2,
+        "lie": 2,
+        "club": "testsw",
+        "aimDeg": -5.2,
+        "recAimDeg": -5.2,
+        "t": 1794900660000,
+        "outcome": "normal",
+        "endLie": 2
+      },
+      {
+        "start": {
+          "x": 28.03,
+          "y": 4.8
+        },
+        "end": {
+          "x": 31.34,
+          "y": 28.82
+        },
+        "startAcc": 9.0,
+        "endAcc": 7.5,
+        "lie": 2,
+        "club": "test7i",
+        "aimDeg": 48.9,
+        "recAimDeg": 3.9,
+        "t": 1794900720000,
+        "outcome": "normal"
+      },
+      {
+        "start": {
+          "x": 27.2,
+          "y": 7.66
+        },
+        "end": {
+          "x": 32.14,
+          "y": 26.64
+        },
+        "startAcc": 2.5,
+        "endAcc": 5.0,
+        "lie": 2,
+        "club": "testsw",
+        "aimDeg": 4.1,
+        "recAimDeg": 4.1,
+        "t": 1794900780000,
+        "outcome": "normal",
+        "endLie": 2
+      },
+      {
+        "start": {
+          "x": 24.88,
+          "y": 2.68
+        },
+        "end": {
+          "x": 27.15,
+          "y": 27.25
+        },
+        "startAcc": 1.5,
+        "endAcc": 5.2,
+        "lie": 2,
+        "club": "test7i",
+        "aimDeg": 4.2,
+        "recAimDeg": 4.2,
+        "t": 1794900840000,
+        "outcome": "normal",
+        "endLie": 4
+      },
+      {
+        "start": {
+          "x": 23.94,
+          "y": 6.8
+        },
+        "end": {
+          "x": 27.23,
+          "y": 23.72
+        },
+        "startAcc": 7.8,
+        "endAcc": 6.1,
+        "lie": 2,
+        "club": "testsw",
+        "aimDeg": 5.9,
+        "recAimDeg": 5.9,
+        "t": 1794900900000,
+        "outcome": "normal"
+      },
+      {
+        "start": {
+          "x": 32.54,
+          "y": 6.95
+        },
+        "end": {
+          "x": 34.88,
+          "y": 36.01
+        },
+        "startAcc": 5.6,
+        "endAcc": 5.6,
+        "lie": 2,
+        "club": "test7i",
+        "aimDeg": 2.3,
+        "recAimDeg": 2.3,
+        "t": 1794900960000,
+        "outcome": "normal",
+        "endLie": 2
+      },
+      {
+        "start": {
+          "x": 35.88,
+          "y": 6.01
+        },
+        "end": {
+          "x": 37.15,
+          "y": 23.13
+        },
+        "startAcc": 7.9,
+        "endAcc": 5.8,
+        "lie": 2,
+        "club": "testsw",
+        "aimDeg": 1.6,
+        "recAimDeg": 1.6,
+        "t": 1794901020000,
+        "outcome": "normal",
+        "endLie": 2
+      },
+      {
+        "start": {
+          "x": 25.51,
+          "y": 3.71
+        },
+        "end": {
+          "x": 31.14,
+          "y": 29.53
+        },
+        "startAcc": 4.4,
+        "endAcc": 5.1,
+        "lie": 2,
+        "club": "test7i",
+        "aimDeg": 11.8,
+        "recAimDeg": 11.8,
+        "t": 1794901080000,
+        "outcome": "normal"
+      },
+      {
+        "start": {
+          "x": 12.66,
+          "y": 7.44
+        },
+        "end": null,
+        "startAcc": 8.1,
+        "endAcc": null,
+        "lie": 2,
+        "club": "testsw",
+        "aimDeg": -1.2,
+        "recAimDeg": -1.2,
+        "t": 1794901140000,
+        "outcome": "normal"
+      }
+    ]
+  },
+  "skipped": {
+    "3": "penalty",
+    "6": "accuracy",
+    "9": "green",
+    "12": "aim",
+    "19": "open"
+  },
+  "observation_columns": [
+    "carry_est_m",
+    "total_m",
+    "lateral_m"
+  ],
+  "observations": {
+    "test7i": [
+      [
+        23.131494185583154,
+        25.131494185583154,
+        0.7944540882115443
+      ],
+      [
+        29.79001510573635,
+        29.79001510573635,
+        1.3828199215443038
+      ],
+      [
+        23.371184442197414,
+        25.371184442197414,
+        -0.8596542766037315
+      ],
+      [
+        26.953681976563878,
+        28.953681976563878,
+        2.4821407988494317
+      ],
+      [
+        23.70799486541103,
+        25.70799486541103,
+        -0.3733890460609643
+      ],
+      [
+        24.674638801814304,
+        24.674638801814304,
+        0.4645236554476713
+      ],
+      [
+        27.154059751602347,
+        29.154059751602347,
+        1.0923752716330697
+      ],
+      [
+        24.426677808608485,
+        26.426677808608485,
+        0.21346605084870346
+      ]
+    ],
+    "testsw": [
+      [
+        15.28364209874437,
+        16.28364209874437,
+        2.828889623505854
+      ],
+      [
+        16.409414119952455,
+        17.409414119952455,
+        -1.8861176128274635
+      ],
+      [
+        17.084714540185587,
+        18.084714540185587,
+        -1.5997463949402
+      ],
+      [
+        15.907232180342234,
+        16.907232180342234,
+        -1.7457193613063433
+      ],
+      [
+        18.612343052271957,
+        19.612343052271957,
+        3.4458706538074027
+      ],
+      [
+        16.236893571638713,
+        17.236893571638713,
+        1.4501155761798024
+      ],
+      [
+        16.167041096240197,
+        17.167041096240197,
+        0.7461748763766072
+      ]
+    ]
+  },
+  "after": {
+    "test7i": {
+      "n": 8,
+      "carry": {
+        "m": 25.24690361057823,
+        "kappa": 13.0,
+        "alpha": 6.5,
+        "beta": 21.77214144818557
+      },
+      "theta": {
+        "alpha": 6.5,
+        "beta": 49.29421860482629
+      },
+      "roll": {
+        "m": 1.6923076923076923,
+        "kappa": 13.0,
+        "alpha": 6.5,
+        "beta": 4.884615384615384
+      }
+    },
+    "testsw": {
+      "n": 7,
+      "carry": {
+        "m": 15.891773388281294,
+        "kappa": 12.0,
+        "alpha": 6.0,
+        "beta": 7.660650793711494
+      },
+      "theta": {
+        "alpha": 6.0,
+        "beta": 205.92046862333564
+      },
+      "roll": {
+        "m": 1.0,
+        "kappa": 12.0,
+        "alpha": 6.0,
+        "beta": 1.5
+      }
+    }
+  },
+  "learned": {
+    "test7i": {
+      "mu_c": 25.24690361057823,
+      "sigma_theta_deg": 2.9937577057733824,
+      "sigma_d": 0.07880633071166011,
+      "p": 0.05,
+      "mu_r": 1.6923076923076923,
+      "sigma_r": 0.9423968846042988,
+      "sampled": true,
+      "stats": {
+        "n": 8,
+        "carry": {
+          "m": 25.24690361057823,
+          "kappa": 13.0,
+          "alpha": 6.5,
+          "beta": 21.77214144818557
+        },
+        "theta": {
+          "alpha": 6.5,
+          "beta": 49.29421860482629
+        },
+        "roll": {
+          "m": 1.6923076923076923,
+          "kappa": 13.0,
+          "alpha": 6.5,
+          "beta": 4.884615384615384
+        }
+      }
+    },
+    "testsw": {
+      "mu_c": 15.891773388281294,
+      "sigma_theta_deg": 6.417483441713514,
+      "sigma_d": 0.07788888147223491,
+      "p": 0.05,
+      "mu_r": 1.0,
+      "sigma_r": 0.5477225575051661,
+      "sampled": false,
+      "stats": {
+        "n": 7,
+        "carry": {
+          "m": 15.891773388281294,
+          "kappa": 12.0,
+          "alpha": 6.0,
+          "beta": 7.660650793711494
+        },
+        "theta": {
+          "alpha": 6.0,
+          "beta": 205.92046862333564
+        },
+        "roll": {
+          "m": 1.0,
+          "kappa": 12.0,
+          "alpha": 6.0,
+          "beta": 1.5
+        }
+      }
+    },
+    "test5i": {
+      "mu_c": 35.0,
+      "sigma_theta_deg": 4.0,
+      "sigma_d": 0.05,
+      "p": 0.05,
+      "mu_r": 2.0,
+      "sigma_r": 1.0,
+      "sampled": false,
+      "stats": null
+    }
+  }
+}

@@ -17,11 +17,14 @@ import json
 import logging
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 import numpy as np
 from scipy.optimize import minimize_scalar
 from scipy.stats import norm
+
+if TYPE_CHECKING:
+    from caddie.geometry import Hole
 
 log = logging.getLogger(__name__)
 
@@ -469,4 +472,225 @@ def write_stats_updates_fixture(path: Path, driver_mu_hint: float = 215.0) -> No
     }
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(doc, indent=2) + "\n")
+
+
+# --- part 15: course shots -----------------------------------------------------------------
+#
+# The app logs where each shot started and stopped (app/src/lib/shotLog.ts). The functions
+# below are the Python mirror of toObservation, statsFromParams and learnedPlayer there;
+# docs/fixtures/course_log.json is the parity fixture.
+
+MAX_LEARN_ACCURACY_M = 10.0
+MAX_AIM_CHANGE_DEG = 30.0
+_LIE_NAME_BY_CODE = {1: "tee", 2: "fairway", 3: "rough", 4: "bunker"}
+_GREEN, _OB = 5, 7
+
+
+def _roll_multiplier(player: Player, landing_lie: int) -> float:
+    """Roll multiplier of the lie the ball stopped on; hazards and trees give no roll."""
+    if landing_lie == _GREEN:
+        return 1.0
+    name = _LIE_NAME_BY_CODE.get(landing_lie)
+    return float(player.lie[name]["roll"]) if name else 0.0
+
+
+def _lie_at(hole: Hole, x: float, y: float) -> int:
+    r, c = int(np.floor(y / hole.cell_m)), int(np.floor(x / hole.cell_m))
+    if not (0 <= r < hole.rows and 0 <= c < hole.cols):
+        return _OB
+    code = int(hole.lie[r, c])
+    return _OB if code == 0 else code
+
+
+def course_shot_skip_reason(shot: dict, hole: Hole, player: Player) -> str | None:
+    """Why a logged shot is not learned from (same rules and order as the app), or None."""
+    if shot.get("end") is None or shot.get("endAcc") is None:
+        return "open"
+    if shot["outcome"] == "penalty":
+        return "penalty"
+    if int(shot["lie"]) == _GREEN:
+        return "green"
+    if shot["club"] not in player.clubs:
+        return "club"
+    if shot["startAcc"] > MAX_LEARN_ACCURACY_M or shot["endAcc"] > MAX_LEARN_ACCURACY_M:
+        return "accuracy"
+    rec = shot.get("recAimDeg")
+    if rec is not None:
+        if abs((shot["aimDeg"] - rec + 180.0) % 360.0 - 180.0) > MAX_AIM_CHANGE_DEG:
+            return "aim"
+    if _course_observation(shot, hole, player) is None:
+        return "short"
+    return None
+
+
+def _course_observation(
+    shot: dict, hole: Hole, player: Player
+) -> tuple[float, float, float] | None:
+    a = np.radians(float(shot["aimDeg"]))
+    dx = float(shot["end"]["x"]) - float(shot["start"]["x"])
+    dy = float(shot["end"]["y"]) - float(shot["start"]["y"])
+    along = dx * np.sin(a) + dy * np.cos(a)
+    across = dx * np.cos(a) - dy * np.sin(a)  # positive is right of the aim line
+    total = float(np.hypot(dx, dy))
+    end_lie = shot.get("endLie")
+    if end_lie is None:
+        end_lie = _lie_at(hole, float(shot["end"]["x"]), float(shot["end"]["y"]))
+    carry = total - player.clubs[shot["club"]].mu_r * _roll_multiplier(player, int(end_lie))
+    if along <= 0.0 or carry <= 0.0:
+        return None
+    return float(carry), total, float(carry * across / along)
+
+
+def load_course_log(
+    path: Path, hole: Hole, player: Player
+) -> dict[str, list[tuple[float, float, float]]]:
+    """club -> (carry_est, total, lateral') for every learnable shot in an exported log.
+
+    ``player`` supplies the mean roll subtracted from the total and the roll multiplier of
+    the lie the ball stopped on (the part file's signature has no player; it is needed).
+    """
+    doc = json.loads(Path(path).read_text())
+    out: dict[str, list[tuple[float, float, float]]] = {}
+    for shot in doc["shots"]:
+        if course_shot_skip_reason(shot, hole, player) is not None:
+            continue
+        obs = _course_observation(shot, hole, player)
+        if obs is not None:
+            out.setdefault(shot["club"], []).append(obs)
+    return out
+
+
+def stats_from_params(cp: ClubParams, kappa: float = PRIOR_KAPPA) -> ClubStats:
+    """A prior worth ``kappa`` pseudo-shots centred on a club's point estimates."""
+    alpha = kappa / 2.0
+    scale = alpha - 1.0
+    return ClubStats(
+        n=0,
+        carry=NIG(m=cp.mu_c, kappa=kappa, alpha=alpha, beta=scale * (cp.sigma_d * cp.mu_c) ** 2),
+        theta=IG(alpha=alpha, beta=scale * cp.sigma_theta_deg**2),
+        roll=NIG(m=cp.mu_r, kappa=kappa, alpha=alpha, beta=scale * cp.sigma_r**2),
+    )
+
+
+def fold_course_shots(
+    player: Player, observations: dict[str, list[tuple[float, float, float]]]
+) -> Player:
+    """The player after folding course observations in. Only the clubs hit change.
+
+    ``p``, the lie multipliers and the putting table are not learned (root contract).
+    """
+    clubs = dict(player.clubs)
+    for club, rows in observations.items():
+        cp = player.clubs.get(club)
+        if cp is None or not rows:
+            continue
+        stats = cp.stats if cp.stats is not None else stats_from_params(cp)
+        for carry, total, lateral in rows:
+            stats = update_club_stats(stats, carry, total, lateral)
+        mu_c, sigma_theta, sigma_d, mu_r, sigma_r = params_from_stats(stats)
+        clubs[club] = ClubParams(
+            mu_c=mu_c,
+            sigma_theta_deg=sigma_theta,
+            sigma_d=sigma_d,
+            p=cp.p,
+            mu_r=mu_r,
+            sigma_r=sigma_r,
+            sampled=cp.sampled,
+            stats=stats,
+        )
+    return Player(
+        handicap=player.handicap,
+        clubs=clubs,
+        club_order=list(player.club_order),
+        lie=player.lie,
+        putting=player.putting,
+    )
+
+
+COURSE_FIXTURE_SHOTS = 20
+COURSE_FIXTURE_SEED = 15
+
+
+def write_course_log_fixture(path: Path, hole: Hole, player: Player) -> None:
+    """docs/fixtures/course_log.json: 20 synthetic shots on the toy hole and what they teach.
+
+    ``player`` is the toy player; the fixture adds an interpolated club (``stats`` null) and
+    a club that is never hit. The app's shotLog.ts and learn.ts must reproduce
+    ``observations`` and ``after`` to 1e-9 from ``log`` and ``player``.
+    """
+    base = player.clubs[player.club_order[0]]
+    sampled = ClubParams(**{**asdict(base), "stats": None})
+    sampled.stats = stats_from_params(sampled)
+    short = ClubParams(
+        **{**asdict(base), "mu_c": 15.0, "mu_r": 1.0, "sampled": False, "stats": None}
+    )
+    unused = ClubParams(**{**asdict(base), "mu_c": 35.0, "sampled": False, "stats": None})
+    names = ("test7i", "testsw", "test5i")
+    fixture_player = Player(
+        handicap=player.handicap,
+        clubs=dict(zip(names, (sampled, short, unused), strict=True)),
+        club_order=list(names),
+        lie=player.lie,
+        putting=player.putting,
+    )
+    rng = np.random.default_rng(COURSE_FIXTURE_SEED)
+    shots = []
+    for k in range(COURSE_FIXTURE_SHOTS):
+        club = names[k % 2]
+        start = (
+            float(np.round(rng.uniform(12.0, 38.0), 2)),
+            float(np.round(rng.uniform(1.0, 9.0), 2)),
+        )
+        aim = float(np.round(rng.uniform(-12.0, 12.0), 1))
+        dist = fixture_player.clubs[club].mu_c * (1.0 + 0.08 * rng.standard_normal()) + 2.0
+        bearing = np.radians(aim + 5.0 * rng.standard_normal())
+        end = (
+            float(np.round(start[0] + dist * np.sin(bearing), 2)),
+            float(np.round(start[1] + dist * np.cos(bearing), 2)),
+        )
+        shot = {
+            "start": {"x": start[0], "y": start[1]},
+            "end": {"x": end[0], "y": end[1]},
+            "startAcc": float(np.round(rng.uniform(0.0, 9.0), 1)),
+            "endAcc": float(np.round(rng.uniform(0.0, 9.0), 1)),
+            "lie": 2,
+            "club": club,
+            "aimDeg": aim,
+            "recAimDeg": aim,
+            "t": 1794900000000 + 60000 * k,
+            "outcome": "normal",
+        }
+        if k % 3 != 0:  # most shots carry the stored lie, the rest fall back to the grid
+            shot["endLie"] = _lie_at(hole, end[0], end[1])
+        shots.append(shot)
+    # One of each skip: a penalty, a poor fix, a putt, a moved aim, an open shot.
+    shots[3]["outcome"] = "penalty"
+    shots[6]["endAcc"] = 14.0
+    shots[9]["lie"] = 5
+    shots[12]["aimDeg"] = shots[12]["recAimDeg"] + 45.0
+    shots[19]["end"], shots[19]["endAcc"] = None, None
+    shots[19].pop("endLie", None)
+    log_doc = {"version": 1, "hole": "toy", "shots": shots}
+    skipped = {
+        str(k): reason
+        for k, s in enumerate(shots)
+        if (reason := course_shot_skip_reason(s, hole, fixture_player)) is not None
+    }
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".log.tmp")
+    tmp.write_text(json.dumps(log_doc))
+    observations = load_course_log(tmp, hole, fixture_player)
+    tmp.unlink()
+    learned = fold_course_shots(fixture_player, observations)
+    doc = {
+        "player": player_to_json(fixture_player),
+        "log": log_doc,
+        "skipped": skipped,
+        "observation_columns": ["carry_est_m", "total_m", "lateral_m"],
+        "observations": {c: [list(o) for o in rows] for c, rows in observations.items()},
+        "after": {c: _stats_to_json(learned.clubs[c].stats) for c in observations},
+        "learned": player_to_json(learned)["clubs"],
+    }
     path.write_text(json.dumps(doc, indent=2) + "\n")
