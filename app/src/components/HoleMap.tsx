@@ -20,6 +20,7 @@ import { type ReactNode, useEffect, useRef, useState } from 'react'
 
 import { AimArrow } from './AimArrow'
 import { BallMarker } from './BallMarker'
+import { GpsBadge } from './GpsBadge'
 import { MapLabels } from './MapLabels'
 import { PlayItOutLayer } from './PlayItOut'
 
@@ -313,6 +314,7 @@ export function HoleMap({ bundle, tee }: HoleMapProps) {
             <path d="M12 2v4M12 18v4M2 12h4M18 12h4" />
           </svg>
         </MapButton>
+        {map && <GpsBadge map={map} />}
       </div>
     </div>
   )

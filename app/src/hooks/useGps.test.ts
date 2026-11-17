@@ -9,6 +9,14 @@ import { type GeoLike, GPS_HOLD_MS, GPS_OPTIONS, MIN_MOVE_M, startGps, useGpsSta
 type Success = (p: { coords: { longitude: number; latitude: number; accuracy: number } }) => void
 type Failure = (e: { message: string }) => void
 
+function must<T>(v: T | null): T {
+  if (v === null) throw new Error('unexpected null')
+  return v
+}
+const gpsNow = () => must(useStore.getState().gps)
+const ballNow = () => must(useStore.getState().ball)
+const metaNow = () => must(useStore.getState().bundle).meta
+
 /** A hand-driven `navigator.geolocation`. */
 function fakeGeo() {
   let success: Success | null = null
@@ -29,11 +37,11 @@ function fakeGeo() {
   return {
     geo,
     fix(p: XY, accuracy = 4) {
-      const { lon, lat } = gridToLonLat(useStore.getState().bundle!.meta, p)
-      success!({ coords: { longitude: lon, latitude: lat, accuracy } })
+      const { lon, lat } = gridToLonLat(metaNow(), p)
+      must(success)({ coords: { longitude: lon, latitude: lat, accuracy } })
     },
     fail(message: string) {
-      failure!({ message })
+      must(failure)({ message })
     },
     cleared: () => cleared,
     options: () => options,
@@ -59,7 +67,7 @@ describe('startGps', () => {
     const f = fakeGeo()
     const stop = startGps(f.geo)
     f.fix({ x: 22, y: 13 }, 6)
-    const gps = useStore.getState().gps!
+    const gps = gpsNow()
     expect(gps.x).toBeCloseTo(22, 3)
     expect(gps.y).toBeCloseTo(13, 3)
     expect(gps.accuracy_m).toBe(6)
@@ -92,12 +100,12 @@ describe('startGps', () => {
 
   it('ignores fixes until a bundle is loaded', () => {
     const f = fakeGeo()
-    const meta = useStore.getState().bundle!.meta
+    const meta = metaNow()
     const { lon, lat } = gridToLonLat(meta, { x: 22, y: 13 })
     useStore.setState({ bundle: null })
-    let success: Success | null = null
-    const stop = startGps({ ...f.geo, watchPosition: (s) => ((success = s), 7) })
-    success!({ coords: { longitude: lon, latitude: lat, accuracy: 4 } })
+    const captured: Success[] = []
+    const stop = startGps({ ...f.geo, watchPosition: (s) => (captured.push(s), 7) })
+    captured[0]({ coords: { longitude: lon, latitude: lat, accuracy: 4 } })
     expect(useStore.getState().gps).toBeNull()
     stop()
   })
@@ -122,17 +130,17 @@ describe('follow rule', () => {
     const unfollow = follow()
     const stop = startGps(f.geo)
     f.fix({ x: 20, y: 10 })
-    expect(useStore.getState().ball!.x).toBeCloseTo(20, 3)
+    expect(ballNow().x).toBeCloseTo(20, 3)
 
     useStore.getState().setBall({ x: 30, y: 30 }) // the player drags or taps the ball
     vi.advanceTimersByTime(GPS_HOLD_MS - 1)
     f.fix({ x: 25, y: 12 })
     expect(useStore.getState().ball).toEqual({ x: 30, y: 30 })
-    expect(useStore.getState().gps!.x).toBeCloseTo(20, 3)
+    expect(gpsNow().x).toBeCloseTo(20, 3)
 
     vi.advanceTimersByTime(1)
     f.fix({ x: 25, y: 12 })
-    expect(useStore.getState().ball!.x).toBeCloseTo(25, 3)
+    expect(ballNow().x).toBeCloseTo(25, 3)
     stop()
     unfollow()
   })
@@ -143,7 +151,7 @@ describe('follow rule', () => {
     const stop = startGps(f.geo)
     f.fix({ x: 20, y: 10 })
     f.fix({ x: 25, y: 12 })
-    expect(useStore.getState().ball!.x).toBeCloseTo(25, 3)
+    expect(ballNow().x).toBeCloseTo(25, 3)
     stop()
     unfollow()
   })
@@ -155,11 +163,11 @@ describe('follow rule', () => {
     f.fix({ x: 20, y: 10 })
     f.fix({ x: -40, y: 10 })
     expect(useStore.getState().gps).toBeNull()
-    expect(useStore.getState().ball!.x).toBeCloseTo(20, 3)
+    expect(ballNow().x).toBeCloseTo(20, 3)
     expect(useGpsStatus.getState().outside).toBe(true)
     f.fix({ x: 21, y: 30 })
     expect(useGpsStatus.getState().outside).toBe(false)
-    expect(useStore.getState().gps!.y).toBeCloseTo(30, 3)
+    expect(gpsNow().y).toBeCloseTo(30, 3)
     stop()
     unfollow()
   })
@@ -172,9 +180,9 @@ describe('follow rule', () => {
     f.fix({ x: 20 + MIN_MOVE_M / 2, y: 10 }, 5)
     expect(useStore.getState().gps).toBe(first)
     f.fix({ x: 20 + MIN_MOVE_M / 2, y: 10 }, 9)
-    expect(useStore.getState().gps!.accuracy_m).toBe(9)
+    expect(gpsNow().accuracy_m).toBe(9)
     f.fix({ x: 20 + MIN_MOVE_M * 2, y: 10 }, 9)
-    expect(useStore.getState().gps!.x).toBeCloseTo(20 + MIN_MOVE_M * 2, 3)
+    expect(gpsNow().x).toBeCloseTo(20 + MIN_MOVE_M * 2, 3)
     stop()
   })
 })
