@@ -316,4 +316,4 @@ def test_cli_benchmark_runs_two_cases(tmp_path: Path):
     assert (out / "toy-drop_cell.md").exists() and (out / "open-straight_cell.md").exists()
     assert (out / "toy-drop_point.md").exists()
     assert (out / "strokes_vs_compute.png").exists()
-    assert (out / "solutions" / "open_straight_drop.npz").exists()
+    assert (out / "solutions" / "open_straight__round_numbers_drop.npz").exists()
