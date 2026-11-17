@@ -1,5 +1,8 @@
 """Tests for caddie.mdp (part 04)."""
 
+import json
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -441,3 +444,54 @@ def test_bundle_round_trips_tree_cells(tmp_path):
     _, lie, value, _, _ = read_bundle(tmp_path / "toy" / "drop")
     assert int((lie == 8).sum()) == 5
     assert np.isnan(value[lie == 8]).all()
+
+
+# part 17 slice 4: exact march ----------------------------------------------------
+
+TREE_RAYS = Path(__file__).resolve().parents[2] / "docs" / "fixtures" / "tree_rays.json"
+
+
+def test_first_tree_distance_straight_parallel_and_range():
+    from caddie.mdp import RAY_STEP_M, first_tree_distance
+    from tests.fixtures.toy_hole import toy_tree_hole
+
+    hole = toy_tree_hole()
+    d = first_tree_distance(hole, 27.5, 2.5, 0.0)  # tee, straight at the row (y 20 to 25)
+    assert abs(d - 17.5) <= RAY_STEP_M and d == 18.0
+    assert first_tree_distance(hole, 2.5, 12.5, 90.0) == np.inf  # below the row, along it
+    assert first_tree_distance(hole, 27.5, 2.5, 180.0) == np.inf  # away from it, off the grid
+    assert first_tree_distance(hole, 27.5, 2.5, 0.0, max_m=10.0) == np.inf
+    # 45 degrees right from the tee: reaches y = 20 at x = 45, past the row's right end (x 40)
+    assert first_tree_distance(hole, 27.5, 2.5, 45.0) == np.inf
+    # 30 degrees right: reaches y = 20 at x = 37.6, inside the row
+    assert first_tree_distance(hole, 27.5, 2.5, 30.0) == 21.0
+
+
+def test_first_tree_distance_skips_the_clump_the_ball_starts_in():
+    from caddie.mdp import first_tree_distance
+    from tests.fixtures.toy_hole import toy_tree_hole
+
+    hole = toy_tree_hole()
+    assert first_tree_distance(hole, 27.5, 22.5, 0.0) == np.inf  # chips out toward the pin
+    hole.lie[7, 5] = int(Lie.TREES)  # a second tree further up the line, y 35 to 40
+    assert first_tree_distance(hole, 27.5, 22.5, 0.0) == 13.0
+
+
+def test_tree_rays_fixture_matches_python():
+    from caddie.mdp import first_tree_distance
+    from tests.fixtures.toy_hole import toy_tree_hole
+
+    doc = json.loads(TREE_RAYS.read_text())
+    hole = toy_tree_hole()
+    assert doc["rows"] == hole.rows and doc["cols"] == hole.cols and doc["cell_m"] == hole.cell_m
+    assert doc["lie"] == hole.lie.reshape(-1).tolist()
+    assert len(doc["cases"]) == 10
+    hits = 0
+    for case in doc["cases"]:
+        d = first_tree_distance(hole, case["x"], case["y"], case["bearing_deg"])
+        if case["distance_m"] is None:
+            assert d == np.inf
+        else:
+            hits += 1
+            assert d == pytest.approx(case["distance_m"], abs=1e-9)
+    assert 3 <= hits <= 8  # the fixture mixes hits and misses

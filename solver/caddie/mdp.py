@@ -13,6 +13,7 @@ by every cell and sweep) so value iteration is deterministic.
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass
 from enum import IntEnum
 from typing import Literal, Protocol
@@ -212,6 +213,57 @@ def locate(hole: Hole, x: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.nda
     outside = outside | (lie == Lie.OUT)
     lie = np.where(outside, int(Lie.OB), lie)
     return idx, lie, outside
+
+
+# --- part 17: trees block the ball ---------------------------------------------------
+
+TREE_STEP_BACK_M = 2.5  # a blocked ball rests this far before the first tree point
+RAY_STEP_M = 1.0
+RAY_MAX_M = 320.0
+RAY_BIN_DEG = 0.5
+
+
+def _is_tree(hole: Hole, x: np.ndarray, y: np.ndarray) -> np.ndarray:
+    """True where (x, y) is inside a tree cell; points off the grid are not trees."""
+    r = np.floor(y / hole.cell_m).astype(np.int64)
+    c = np.floor(x / hole.cell_m).astype(np.int64)
+    inside = (r >= 0) & (r < hole.rows) & (c >= 0) & (c < hole.cols)
+    out = np.zeros(np.shape(x), dtype=bool)
+    out[inside] = hole.lie[r[inside], c[inside]] == Lie.TREES
+    return out
+
+
+def tree_march(
+    hole: Hole, x: np.ndarray, y: np.ndarray, bearing_deg: np.ndarray, max_m: float = RAY_MAX_M
+) -> np.ndarray:
+    """Distance to the first tree point along each ray, ``inf`` where there is none.
+
+    The ray is sampled every ``RAY_STEP_M`` from ``RAY_STEP_M`` to ``max_m``. Bearings
+    are absolute, degrees clockwise from +y. A ray that starts inside a tree cell (only
+    the app can put a ball there) ignores trees until it has left that clump, so the
+    player can chip out. ``x``, ``y`` and ``bearing_deg`` broadcast together.
+    """
+    x, y, b = np.broadcast_arrays(
+        np.asarray(x, dtype=float), np.asarray(y, dtype=float), np.asarray(bearing_deg, dtype=float)
+    )
+    rad = np.radians(b)
+    sx, sy = np.sin(rad), np.cos(rad)
+    dist = np.full(x.shape, np.inf)
+    in_start_clump = _is_tree(hole, x, y)
+    for k in range(1, int(math.floor(max_m / RAY_STEP_M)) + 1):
+        d = k * RAY_STEP_M
+        tree = _is_tree(hole, x + d * sx, y + d * sy)
+        in_start_clump &= tree
+        hit = tree & ~in_start_clump & np.isinf(dist)
+        dist[hit] = d
+    return dist
+
+
+def first_tree_distance(
+    hole: Hole, x: float, y: float, bearing_deg: float, max_m: float = RAY_MAX_M
+) -> float:
+    """Scalar :func:`tree_march`: the reference both halves are tested against."""
+    return float(tree_march(hole, np.array([x]), np.array([y]), np.array([bearing_deg]), max_m)[0])
 
 
 def pin_bearing_deg(hole: Hole, x: np.ndarray, y: np.ndarray) -> np.ndarray:

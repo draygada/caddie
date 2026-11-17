@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
 import fixture from '../../../docs/fixtures/shot_samples.json'
+import treeRays from '../../../docs/fixtures/tree_rays.json'
 import { cellOf } from './grid'
 import { mulberry32 } from './rng'
-import { expectedPutts, sampleShot } from './shot'
+import { expectedPutts, firstTreeDistance, sampleShot, TREE_STEP_BACK_M } from './shot'
 import { readToyBundle, toyPlayerDoc } from './toyFiles'
 import type { Lie, Mode } from './types'
 
@@ -139,5 +140,29 @@ describe('terrain rules (part 04 slice 5 on the toy bundle)', () => {
     const clear = sampleShot(b, player, { x: 22.5, y: 12.5 }, 3, 'test7i', -((Math.atan2(5, 35) * 180) / Math.PI), 'replay', meanShot())
     expect(clear.lie).toBe(2)
     expect(clear.y).toBeCloseTo(12.5 + 25 * 0.9 + 2 * 0.5, 6)
+  })
+})
+
+describe('firstTreeDistance parity with docs/fixtures/tree_rays.json (part 17)', () => {
+  const doc = treeRays
+  const toy = readToyBundle()
+  const b = { ...toy, lie: Uint8Array.from(doc.lie) }
+
+  it('uses the toy grid', () => {
+    expect([doc.rows, doc.cols, doc.cell_m]).toEqual([b.meta.rows, b.meta.cols, b.meta.cell_m])
+    expect(TREE_STEP_BACK_M).toBe(2.5)
+  })
+
+  it('reproduces every case to 1e-6', () => {
+    expect(doc.cases).toHaveLength(10)
+    for (const c of doc.cases) {
+      const d = firstTreeDistance(b, { x: c.x, y: c.y }, c.bearing_deg)
+      if (c.distance_m === null) expect(d).toBe(Infinity)
+      else expect(d).toBeCloseTo(c.distance_m, 6)
+    }
+  })
+
+  it('respects maxM', () => {
+    expect(firstTreeDistance(b, { x: 27.5, y: 2.5 }, 0, 10)).toBe(Infinity)
   })
 })

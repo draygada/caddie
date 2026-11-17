@@ -62,6 +62,44 @@ export function locate(b: HoleBundle, p: XY): { i: number; lie: Lie; outside: bo
   return { i, lie, outside: outside || raw === 0 }
 }
 
+// --- part 17: trees block the ball -----------------------------------------------------------
+
+export const TREE_STEP_BACK_M = 2.5
+export const RAY_STEP_M = 1
+export const RAY_MAX_M = 320
+const LIE_TREES = 8
+
+function isTree(b: HoleBundle, x: number, y: number): boolean {
+  const { rows, cols, cell_m } = b.meta
+  const r = Math.floor(y / cell_m)
+  const c = Math.floor(x / cell_m)
+  if (r < 0 || r >= rows || c < 0 || c >= cols) return false
+  return b.lie[r * cols + c] === LIE_TREES
+}
+
+/**
+ * Distance to the first tree point along the ray from `from` at absolute bearing
+ * `bearingDeg` (clockwise from +y), sampled every `RAY_STEP_M`; Infinity when none within
+ * `maxM`. A ray that starts inside a tree cell ignores trees until it leaves that clump.
+ * Same march as `first_tree_distance` in the solver's mdp.py.
+ */
+export function firstTreeDistance(b: HoleBundle, from: XY, bearingDeg: number, maxM = RAY_MAX_M): number {
+  const rad = (bearingDeg * Math.PI) / 180
+  const sx = Math.sin(rad)
+  const sy = Math.cos(rad)
+  let inStartClump = isTree(b, from.x, from.y)
+  const steps = Math.floor(maxM / RAY_STEP_M)
+  for (let k = 1; k <= steps; k++) {
+    const d = k * RAY_STEP_M
+    const tree = isTree(b, from.x + d * sx, from.y + d * sy)
+    if (inStartClump) {
+      if (tree) continue
+      inStartClump = false
+    } else if (tree) return d
+  }
+  return Infinity
+}
+
 /**
  * Drop cell for a water landing: the nearest fairway or rough cell at or below the
  * water cell's row (the tee side), as geometry.compute_drop_index.
