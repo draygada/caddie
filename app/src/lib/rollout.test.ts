@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import { cellOf, centreOf, policyAt, valueNearest } from './grid'
 import { mulberry32 } from './rng'
-import { candidateClubs, recommend, TEE_ONLY_CLUBS } from './rollout'
+import { actionOutcome, candidateClubs, recommend, TEE_ONLY_CLUBS } from './rollout'
 import { readToyBundle, toyPlayerDoc } from './toyFiles'
 import type { Lie, Player } from './types'
 
@@ -114,5 +114,43 @@ describe('tee-only driver (part 17)', () => {
     const tee = recommend(toy, bag, far, 1, 'drop', 20, 1)
     expect(['driver', 'test7i']).toContain(tee.club)
     expect(recommend(toy, bag, far, 8, 'drop', 20, 1)).toEqual(recommend(toy, bag, far, 3, 'drop', 20, 1))
+  })
+})
+
+describe('actionOutcome (part 22): what is likely for one club and aim', () => {
+  const from = { x: 27.5, y: 2.5 }
+  const lie = b.lie[5] as Lie
+  const club = player.club_order[0]
+
+  it('expected strokes equal the rollout action value on the same seed and draws', () => {
+    const r = recommend(b, player, from, lie, 'drop', 120, 9)
+    const di = b.meta.directions_deg.indexOf(6)
+    const o = actionOutcome(b, player, from, lie, club, 6, 'drop', 120, 9)
+    expect(o.expected).toBeCloseTo(r.q[0 * b.meta.directions_deg.length + di], 5)
+  })
+
+  it('gives one finish per draw and shares that sum to 1', () => {
+    const o = actionOutcome(b, player, from, lie, club, 0, 'drop', 200, 1)
+    expect(o.finishes).toHaveLength(200)
+    const total = Object.values(o.share).reduce((s, v) => s + v, 0)
+    expect(total).toBeCloseTo(1, 9)
+    expect(Object.keys(o.share).sort()).toEqual(['bunker', 'fairway', 'green', 'penalty', 'rough'])
+    expect(o.finishes.filter((f) => f.penalty).length / 200).toBeCloseTo(o.share.penalty, 9)
+  })
+
+  it('a shot aimed at the water has a penalty share, and one aimed up the middle has less', () => {
+    const start = { x: 12.5, y: 12.5 }
+    const toWater = (Math.atan2(10 - 12.5, 37.5 - 12.5) - Math.atan2(27.5 - 12.5, 47.5 - 12.5)) * (180 / Math.PI)
+    const wet = actionOutcome(b, player, start, 2, club, toWater, 'drop', 300, 2)
+    const dry = actionOutcome(b, player, { x: 27.5, y: 2.5 }, 2, club, 0, 'drop', 300, 2)
+    expect(wet.share.penalty).toBeGreaterThan(0.2)
+    expect(wet.share.penalty).toBeGreaterThan(dry.share.penalty)
+    expect(wet.expected).toBeGreaterThan(dry.expected - 1)
+  })
+
+  it('is deterministic for a seed', () => {
+    const a = actionOutcome(b, player, from, lie, club, 3, 'drop', 50, 4)
+    const c = actionOutcome(b, player, from, lie, club, 3, 'drop', 50, 4)
+    expect(a).toEqual(c)
   })
 })

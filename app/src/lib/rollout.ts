@@ -80,6 +80,57 @@ function actionValue(
   return sum / m
 }
 
+export type FinishKind = 'fairway' | 'rough' | 'bunker' | 'green' | 'penalty'
+
+export interface ActionOutcome {
+  /** Mean strokes to hole out: this shot plus the value where the ball finishes. */
+  expected: number
+  /** Where each drawn shot came to rest. */
+  finishes: { x: number; y: number; penalty: boolean }[]
+  /** Share of the draws finishing on each kind of ground; sums to 1. */
+  share: Record<FinishKind, number>
+}
+
+function finishKind(lie: Lie, reward: number): FinishKind {
+  if (reward < -1 || lie === 6 || lie === 7) return 'penalty'
+  if (lie === 5) return 'green'
+  if (lie === 4) return 'bunker'
+  if (lie === 3 || lie === 8) return 'rough'
+  return 'fairway'
+}
+
+/**
+ * What is likely for one club and aim (part 22): `n` shots from the player's distribution,
+ * where they finish, and the expected strokes. The draws and the value are exactly those of
+ * `actionValue`, so `expected` equals the rollout's number for the same action and seed.
+ */
+export function actionOutcome(
+  b: HoleBundle,
+  player: Player,
+  from: XY,
+  lie: Lie,
+  club: string,
+  dir_deg: number,
+  mode: Mode,
+  n = 200,
+  seed = 1,
+): ActionOutcome {
+  if (lie === 8) lie = 3
+  const rng = mulberry32(seed)
+  const share: Record<FinishKind, number> = { fairway: 0, rough: 0, bunker: 0, green: 0, penalty: 0 }
+  const finishes: ActionOutcome['finishes'] = []
+  let sum = 0
+  for (let j = 0; j < n; j++) {
+    const s = sampleShot(b, player, from, lie, club, dir_deg, mode, rng)
+    const nextLie = s.reward === -1 ? s.lie : lieOfNext(b, s.next)
+    sum += -s.reward + leafValue(b, player, s.next, nextLie)
+    const kind = finishKind(s.lie, s.reward)
+    share[kind] += 1 / n
+    finishes.push({ x: s.x, y: s.y, penalty: kind === 'penalty' })
+  }
+  return { expected: sum / n, finishes, share }
+}
+
 function lieOfNext(b: HoleBundle, p: XY): Lie {
   const { cols, cell_m } = b.meta
   const r = Math.floor(p.y / cell_m)
