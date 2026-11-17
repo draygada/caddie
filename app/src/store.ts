@@ -14,6 +14,8 @@ import { type LoggedShot, logKey, toObservation } from './lib/shotLog'
 import type { HoleBundle, Lie, Mode, Player, XY } from './lib/types'
 
 export type HoleId = 10 | 11 | 12 | 'toy'
+/** Part 21: the home page, or one of the two hole screens. Never persisted. */
+export type Screen = 'home' | 'simulate' | 'play'
 
 export interface Recommendation {
   club: string
@@ -28,6 +30,7 @@ export interface Gps extends XY {
 }
 
 export interface State {
+  screen: Screen
   hole: HoleId
   mode: Mode
   tee: string
@@ -43,6 +46,7 @@ export interface State {
   logs: Record<string, LoggedShot[]>
   /** Part 15: plan with the player learned from the log. Persisted. */
   learn: boolean
+  setScreen: (s: Screen) => void
   setHole: (h: HoleId) => void
   setMode: (m: Mode) => void
   setTee: (name: string) => void
@@ -64,6 +68,7 @@ export interface State {
 }
 
 export const initialState = {
+  screen: 'home' as Screen,
   hole: 'toy' as HoleId,
   mode: 'drop' as Mode,
   tee: 'black',
@@ -116,6 +121,7 @@ export const useStore = create<State>()(
   persist(
     (set, get) => ({
   ...initialState,
+  setScreen: (screen) => set({ screen }),
   setHole: (hole) => set({ hole }),
   setMode: (mode) => set({ mode }),
   setTee: (tee) => {
