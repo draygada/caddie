@@ -12,7 +12,7 @@ import { lieAt } from '../lib/grid'
 import { whenStyleReady } from '../lib/mapReady'
 import { TEE_ONLY_CLUBS } from '../lib/rollout'
 import type { LoggedShot } from '../lib/shotLog'
-import { exportFileName, exportLog, logKey } from '../lib/shotLog'
+import { type Dwell, exportFileName, exportLog, logKey, shouldPromptLanding, updateDwell } from '../lib/shotLog'
 import { clubDisplayName, token } from '../lib/tokens'
 import type { Lie, Meta, Player, XY } from '../lib/types'
 import { activeLog, useStore } from '../store'
@@ -77,6 +77,33 @@ export function chipClubs(player: Player, lie: Lie, recommended: string | null):
   return recommended && bag.includes(recommended) ? [recommended, ...bag.filter((id) => id !== recommended)] : bag
 }
 
+/**
+ * Slice 8: with GPS on, true once the player has stood still for 20 s at least 20 m from the
+ * open shot's start. It only reveals a button; a shot is recorded on a tap and never otherwise.
+ */
+function useLandingPrompt(openStart: XY | null): boolean {
+  const gps = useStore((s) => s.gps)
+  const dwellRef = useRef<Dwell | null>(null)
+  const [show, setShow] = useState(false)
+
+  useEffect(() => {
+    dwellRef.current = gps ? updateDwell(dwellRef.current, gps, Date.now()) : null
+  }, [gps])
+
+  useEffect(() => {
+    if (!gps || !openStart) {
+      setShow(false)
+      return
+    }
+    const check = () => setShow(shouldPromptLanding(dwellRef.current, openStart, Date.now()))
+    check()
+    const id = setInterval(check, 1000)
+    return () => clearInterval(id)
+  }, [gps, openStart])
+
+  return show
+}
+
 export function ShotLogger() {
   const bundle = useStore((s) => s.bundle)
   const player = useStore((s) => s.player)
@@ -88,6 +115,8 @@ export function ShotLogger() {
   const finishShot = useStore((s) => s.finishShot)
   const undoShot = useStore((s) => s.undoShot)
   const [picked, setPicked] = useState<string | null>(null)
+  const lastShot = log[log.length - 1]
+  const ballHere = useLandingPrompt(lastShot && lastShot.end === null ? lastShot.start : null)
 
   // A new recommendation (the ball moved) puts the chips back on the recommended club.
   const recClub = recommendation?.club ?? null
@@ -120,6 +149,16 @@ export function ShotLogger() {
             </button>
           ))}
         </div>
+      )}
+      {ballHere && canHit && (
+        <button
+          type="button"
+          className={`${BUTTON} border border-gps bg-surface-2 text-ink`}
+          onClick={() => hitShot(club ?? undefined)}
+          data-testid="ball-here"
+        >
+          Ball here? Log the next shot
+        </button>
       )}
       <div className="flex gap-2">
         <button

@@ -6,13 +6,18 @@ import { describe, expect, it } from 'vitest'
 
 import { learnedPlayer, updateClubStats } from './learn'
 import {
+  DWELL_MS,
+  DWELL_RADIUS_M,
   exportFileName,
   exportLog,
   type LoggedShot,
   MAX_AIM_CHANGE_DEG,
   MAX_LEARN_ACCURACY_M,
+  MIN_SHOT_M,
+  shouldPromptLanding,
   skipReason,
   toObservation,
+  updateDwell,
 } from './shotLog'
 import { testBundle } from './testBundle'
 import { readToyBundle } from './toyFiles'
@@ -203,5 +208,30 @@ describe('exportLog', () => {
 
   it('names the file by round', () => {
     expect(exportFileName('2026-11-17:11')).toBe('caddie-log-2026-11-17-hole-11.json')
+  })
+})
+
+describe('landing prompt (slice 8)', () => {
+  const hit = { x: 20, y: 10 }
+
+  it('tracks how long the player has stayed within 5 m of one spot', () => {
+    let d = updateDwell(null, { x: 20, y: 100 }, 1000)
+    expect(d).toEqual({ anchor: { x: 20, y: 100 }, since: 1000 })
+    d = updateDwell(d, { x: 23, y: 103 }, 9000) // 4.2 m away: still here
+    expect(d.since).toBe(1000)
+    d = updateDwell(d, { x: 20, y: 106 }, 12000) // 6 m from the anchor: walking again
+    expect(d).toEqual({ anchor: { x: 20, y: 106 }, since: 12000 })
+  })
+
+  it('prompts after 20 s still, at least 20 m from the last Hit, while that shot is open', () => {
+    expect(DWELL_RADIUS_M).toBe(5)
+    expect(DWELL_MS).toBe(20_000)
+    expect(MIN_SHOT_M).toBe(20)
+    const d = { anchor: { x: 20, y: 100 }, since: 1000 }
+    expect(shouldPromptLanding(d, hit, 20_999)).toBe(false)
+    expect(shouldPromptLanding(d, hit, 21_000)).toBe(true)
+    expect(shouldPromptLanding({ anchor: { x: 20, y: 29 }, since: 1000 }, hit, 60_000)).toBe(false) // 19 m
+    expect(shouldPromptLanding(d, null, 60_000)).toBe(false) // no open shot
+    expect(shouldPromptLanding(null, hit, 60_000)).toBe(false) // no fix
   })
 })

@@ -115,3 +115,34 @@ export function exportFileName(key: string): string {
   const [date, hole] = key.split(':')
   return `caddie-log-${date}-hole-${hole}.json`
 }
+
+// --- landing prompt (slice 8) ------------------------------------------------------------------
+
+/** Standing still means staying within this distance of where the player stopped. */
+export const DWELL_RADIUS_M = 5
+/** How long the player must stand still before the app asks "Ball here?". */
+export const DWELL_MS = 20_000
+/** The prompt only appears this far from the last Hit. */
+export const MIN_SHOT_M = 20
+
+export interface Dwell {
+  anchor: XY
+  since: number
+}
+
+/** Fold one GPS fix in: the anchor holds while fixes stay within `DWELL_RADIUS_M` of it. */
+export function updateDwell(d: Dwell | null, fix: XY, t: number): Dwell {
+  if (d && Math.hypot(fix.x - d.anchor.x, fix.y - d.anchor.y) <= DWELL_RADIUS_M) return d
+  return { anchor: { x: fix.x, y: fix.y }, since: t }
+}
+
+/**
+ * Whether to show "Ball here?": the player has stood still for `DWELL_MS`, at least
+ * `MIN_SHOT_M` from the start of the open shot (`openStart`, null when no shot is open).
+ * The prompt only offers; nothing is recorded without a tap.
+ */
+export function shouldPromptLanding(d: Dwell | null, openStart: XY | null, now: number): boolean {
+  if (!d || !openStart) return false
+  if (now - d.since < DWELL_MS) return false
+  return Math.hypot(d.anchor.x - openStart.x, d.anchor.y - openStart.y) >= MIN_SHOT_M
+}
