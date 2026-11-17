@@ -13,14 +13,18 @@ This supersedes the GPS toggle button of part 14 and section 4.1 of `docs/design
 | Screen | For | Has | Does not have |
 | --- | --- | --- | --- |
 | **Home** | Choosing | Two large cards: "Simulate a hole" and "Play with GPS" | A map |
-| **Simulate** | The desk: any hole, any spot | Hole, tee and penalty-mode pickers, heatmap, tap or drag to place the ball, lie row, recommendation, aim text, Play it out | GPS, shot logging, the learn switch |
-| **Play** | The course | GPS always on, accuracy circle, lie row, recommendation, Hit and finish buttons, "Ball here?", the learn switch, export | A GPS toggle, Play it out |
+| **Simulate** | The desk: any hole, any spot | Hole, tee and penalty-mode pickers, heatmap, tap or drag to place the ball, recommendation, aim text, Play it out | GPS, shot logging, the learn switch |
+| **Play** | The course | GPS always on, accuracy circle, recommendation, Hit and finish buttons, "Ball here?", the learn switch, export | A GPS toggle, Play it out |
 
 - **Home is always the first screen.** `screen` is not persisted. Tapping "Play with GPS" is the user gesture iOS Safari needs before it hands out a position, which is the job the toggle used to do.
 - **A way back.** Both hole screens have a Home button at the left of the top bar. Leaving Play stops the GPS watch.
 - **Tapping the map still moves the ball in Play.** It is the manual correction part 14's follow rule already allows (GPS writes are held for 10 s after it).
 - **GPS refused or unavailable in Play.** The panel says so in plain words with a "Try again" button (a fresh gesture) and a line that Simulate works without location. The rest of the panel still works from a tapped ball.
 - **The bundle keeps loading on Home**, so the hole and its satellite tiles are cached before the user picks a mode.
+
+## The lie is always detected
+
+The lie row of part 11 (Auto, Fairway, Rough, Bunker) is removed from both modes. The lie is always read off the map at the ball, and the panel shows it as one read-only line, "Ball is in the fairway". `lieOverride` stays in the store, always null, so nothing downstream changes; `LieButtons.tsx` is deleted. To correct a wrong lie the player moves the ball. This supersedes slice 5 of part 11 and the lie row in `docs/design.md` section 4.1.
 
 ## Interfaces
 
