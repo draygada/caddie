@@ -186,7 +186,7 @@ def greedy_policy(
         idx = np.array([cell_index(hole, x, y)])
         from_lie = np.array([int(lie)])
         best, best_d = (0, nearest_dir_index(0.0)), np.inf
-        for ci, di in candidate_actions(hole, player, (x, y)):
+        for ci, di in candidate_actions(hole, player, (x, y), lie):
             nxt, _ = step_batch(hole, player, idx, from_lie, int(ci), int(di), tables, mode)
             nx, ny = cell_xy(hole, nxt[0])
             d = float(np.mean(np.hypot(nx - px, ny - py)))
@@ -319,7 +319,7 @@ def sparse2_point_policy(
 
     def point(x: float, y: float, lie: Lie) -> tuple[str, float]:
         best, best_q = ("", 0.0), np.inf
-        for ci, di in candidate_actions(hole, player, (x, y)):
+        for ci, di in candidate_actions(hole, player, (x, y), lie):
             club = player.clubs[player.club_order[ci]]
             deg = float(DIRECTIONS_DEG[di])
             nx, ny, cost = shots_from_point(hole, player, x, y, lie, club, deg, draws1, mode)
@@ -400,7 +400,7 @@ def mcts_point_policy(
         return float(cost[0] + v[0])
 
     def point(x: float, y: float, lie: Lie) -> tuple[str, float]:
-        clubs = sorted({int(ci) for ci, _ in candidate_actions(hole, player, (x, y))})
+        clubs = sorted({int(ci) for ci, _ in candidate_actions(hole, player, (x, y), lie)})
         # per club: visit count, sum of returns, and a list of [aim_deg, n, total]
         n_club = np.zeros(len(clubs))
         s_club = np.zeros(len(clubs))

@@ -203,7 +203,7 @@ def recommend(
     draws = make_draws(m, seed)
     n_clubs, n_dirs = len(player.club_order), len(DIRECTIONS_DEG)
     q = np.full((n_clubs, n_dirs), np.nan)
-    actions = candidate_actions(hole, player, (x, y))
+    actions = candidate_actions(hole, player, (x, y), from_lie)  # part 17: tee-only clubs
     for ci in np.unique(actions[:, 0]):
         club = player.clubs[player.club_order[ci]]
         for di in np.unique(actions[actions[:, 0] == ci, 1]):

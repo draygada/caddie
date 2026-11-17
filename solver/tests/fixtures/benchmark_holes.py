@@ -44,6 +44,8 @@ def _finish(lie: np.ndarray, number: int) -> Hole:
     xx, yy = _cell_centres()
     green = np.hypot(xx - GREEN_CENTRE[0], yy - GREEN_CENTRE[1]) <= GREEN_RADIUS_M
     lie[green] = int(Lie.GREEN)
+    # Part 17: the driver is tee-only, so the tee cell carries the tee lie.
+    lie[int(TEE_XY[1] // CELL_M), int(TEE_XY[0] // CELL_M)] = int(Lie.TEE)
     pin_xy = (float(xx[green].mean()), float(yy[green].mean()))
     return Hole(
         number=number,

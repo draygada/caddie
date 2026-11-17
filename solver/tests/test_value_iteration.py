@@ -243,3 +243,34 @@ def test_hole_10_drop_end_to_end(caplog):
     logging.getLogger(__name__).info(
         "hole 10 drop: tee %.2f strokes, %d sweeps, %.0f s", s.U[tee], s.sweeps, elapsed
     )
+
+
+# part 17 slice 7: tee-only driver ---------------------------------------------------
+
+
+def test_driver_is_a_candidate_only_on_tee_cells():
+    from caddie.value_iteration import club_cells, state_mask
+
+    hole = toy_hole()
+    hole.lie[0, 4:7] = int(Lie.TEE)
+    base = toy_player()
+    longer = ClubParams(30.0, 4.0, 0.05, 0.05, 2.0, 1.0, sampled=True, stats=None)
+    player = Player(
+        15,
+        {"driver": longer, "test7i": base.clubs["test7i"]},
+        ["driver", "test7i"],
+        base.lie,
+        base.putting,
+    )
+    playable, _ = state_mask(hole)
+    cells = np.flatnonzero(playable)
+    driver_cells = club_cells(hole, player, cells, 0)
+    assert set(driver_cells.tolist()) == {4, 5, 6}
+    assert np.array_equal(
+        club_cells(hole, player, cells, 1), cells
+    )  # the shortest club stays everywhere
+
+    sol = solve(hole, player, "drop", K=100)
+    off_tee = np.setdiff1d(cells, driver_cells)
+    assert np.all(sol.club[off_tee] == 1)
+    assert np.all(np.isin(sol.club[driver_cells], [0, 1]))
