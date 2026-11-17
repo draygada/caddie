@@ -95,3 +95,10 @@ export function toObservation(b: HoleBundle, player: Player, s: LoggedShot): Obs
   const p = parts(b, player, s)
   return p ? { club: s.club, ...p } : null
 }
+
+/** One log per round: the local date of `t` and the hole, as `2026-11-17:11`. */
+export function logKey(t: number, hole: number | string): string {
+  const d = new Date(t)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}:${hole}`
+}

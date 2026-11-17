@@ -66,7 +66,7 @@ describe('statsFromParams and paramsFromStats', () => {
   })
 
   it('is a prior worth kappa pseudo-shots, 5 by default, with no shots counted', () => {
-    const c = player.clubs[player.club_order[1]]
+    const c = player.clubs[player.club_order[0]]
     const s = statsFromParams(c)
     expect(s.n).toBe(0)
     expect(s.carry.kappa).toBe(PRIOR_KAPPA)

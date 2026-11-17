@@ -4,10 +4,12 @@
  * by the loader caller; the recommendation is derived in a subscriber, never in render.
  */
 import { create } from 'zustand'
+import { createJSONStorage, persist, type StateStorage } from 'zustand/middleware'
 
 import { lieAt, policyAt, valueNearest } from './lib/grid'
 import { createRolloutWorker, RolloutClient, type RolloutResult } from './lib/rollout'
-import { clearAim } from './lib/shot'
+import { clearAim, pinBearingDeg } from './lib/shot'
+import { type LoggedShot, logKey } from './lib/shotLog'
 import type { HoleBundle, Lie, Mode, Player, XY } from './lib/types'
 
 export type HoleId = 10 | 11 | 12 | 'toy'
@@ -36,6 +38,10 @@ export interface State {
   recommendation: Recommendation | null
   /** Part 12: route ball and lie changes through the rollout worker (part 14 turns it on). */
   useWorker: boolean
+  /** Part 15: the shot log, one list per round, keyed by `logKey(date, hole)`. Persisted. */
+  logs: Record<string, LoggedShot[]>
+  /** Part 15: plan with the player learned from the log. Persisted. */
+  learn: boolean
   setHole: (h: HoleId) => void
   setMode: (m: Mode) => void
   setTee: (name: string) => void
@@ -44,6 +50,16 @@ export interface State {
   setGps: (g: Gps | null) => void
   setRecommendation: (r: Recommendation | null) => void
   setUseWorker: (on: boolean) => void
+  /** Record a shot from the ball with `club` (default: the recommended club); ends the open shot here. */
+  hitShot: (club?: string, now?: number) => void
+  /** Close the open shot at the ball as holed-out-of-reach ("On the green") or as a penalty. */
+  finishShot: (outcome: 'green' | 'penalty', now?: number) => void
+  /** Drag correction: move shot `index`'s end (and the next shot's start) to `p`, accuracy 0. */
+  moveShotEnd: (key: string, index: number, p: XY) => void
+  setShotClub: (club: string, now?: number) => void
+  undoShot: (now?: number) => void
+  clearLog: (key: string) => void
+  setLearn: (on: boolean) => void
 }
 
 export const initialState = {
@@ -57,13 +73,47 @@ export const initialState = {
   gps: null,
   recommendation: null,
   useWorker: false,
+  logs: {} as Record<string, LoggedShot[]>,
+  learn: false,
+}
+
+export const LOG_STORAGE_KEY = 'caddie.log'
+
+/** `localStorage` when there is one (the browser), else a store that forgets (node, private mode). */
+function logStorage(): StateStorage {
+  try {
+    if (typeof localStorage !== 'undefined') return localStorage
+  } catch {
+    /* access denied */
+  }
+  return { getItem: () => null, setItem: () => undefined, removeItem: () => undefined }
+}
+
+/** The log of the round being played: today's date and the selected hole. */
+export function activeLog(s: Pick<State, 'logs' | 'hole'>, now = Date.now()): LoggedShot[] {
+  return s.logs[logKey(now, s.hole)] ?? EMPTY_LOG
+}
+const EMPTY_LOG: LoggedShot[] = []
+
+/** Where the player is standing and how well that is known: the fix when the ball sits on it. */
+function standing(s: State): { at: XY; acc: number; lie: Lie } | null {
+  const { bundle, ball, gps } = s
+  if (!bundle || !ball) return null
+  const onFix = gps !== null && gps.x === ball.x && gps.y === ball.y
+  return { at: { x: ball.x, y: ball.y }, acc: onFix ? gps.accuracy_m : 0, lie: s.lieOverride ?? lieAt(bundle, ball) }
+}
+
+function closed(shot: LoggedShot, here: { at: XY; acc: number; lie: Lie }, outcome: LoggedShot['outcome']): LoggedShot {
+  return { ...shot, end: here.at, endAcc: here.acc, endLie: outcome === 'green' ? 5 : here.lie, outcome }
 }
 
 function sameXY(a: XY, b: readonly [number, number]): boolean {
   return a.x === b[0] && a.y === b[1]
 }
 
-export const useStore = create<State>()((set, get) => ({
+export const useStore = create<State>()(
+  persist(
+    (set, get) => ({
   ...initialState,
   setHole: (hole) => set({ hole }),
   setMode: (mode) => set({ mode }),
@@ -84,7 +134,87 @@ export const useStore = create<State>()((set, get) => ({
   setGps: (gps) => set({ gps }),
   setRecommendation: (recommendation) => set({ recommendation }),
   setUseWorker: (useWorker) => set({ useWorker }),
-}))
+  hitShot: (club, now = Date.now()) => {
+    const s = get()
+    const here = standing(s)
+    const rec = s.recommendation
+    if (!here || !s.bundle || !rec) return
+    const key = logKey(now, s.hole)
+    const log = s.logs[key] ?? []
+    const last = log[log.length - 1]
+    const before = last && last.end === null ? [...log.slice(0, -1), closed(last, here, 'normal')] : log
+    const aimDeg = pinBearingDeg(s.bundle, here.at) + rec.dir_deg
+    const shot: LoggedShot = {
+      start: here.at,
+      end: null,
+      startAcc: here.acc,
+      endAcc: null,
+      lie: here.lie,
+      club: club ?? rec.club,
+      aimDeg,
+      recAimDeg: aimDeg,
+      t: now,
+      outcome: 'normal',
+    }
+    set({ logs: { ...s.logs, [key]: [...before, shot] } })
+  },
+  finishShot: (outcome, now = Date.now()) => {
+    const s = get()
+    const here = standing(s)
+    const key = logKey(now, s.hole)
+    const log = s.logs[key]
+    const last = log?.[log.length - 1]
+    if (!here || !log || !last || last.end !== null) return
+    set({ logs: { ...s.logs, [key]: [...log.slice(0, -1), closed(last, here, outcome)] } })
+  },
+  moveShotEnd: (key, index, p) => {
+    const { logs, bundle } = get()
+    const log = logs[key]
+    const shot = log?.[index]
+    if (!log || !shot || shot.end === null) return
+    const next = log.map((x, k) => {
+      if (k === index) return { ...x, end: p, endAcc: 0, endLie: bundle ? lieAt(bundle, p) : x.endLie }
+      if (k === index + 1) return { ...x, start: p, startAcc: 0 }
+      return x
+    })
+    set({ logs: { ...logs, [key]: next } })
+  },
+  setShotClub: (club, now = Date.now()) => {
+    const { logs, hole } = get()
+    const key = logKey(now, hole)
+    const log = logs[key]
+    if (!log || log.length === 0) return
+    set({ logs: { ...logs, [key]: [...log.slice(0, -1), { ...log[log.length - 1], club }] } })
+  },
+  undoShot: (now = Date.now()) => {
+    const { logs, hole } = get()
+    const key = logKey(now, hole)
+    const log = logs[key]
+    if (!log || log.length === 0) return
+    const kept = log.slice(0, -1)
+    const prev = kept[kept.length - 1]
+    // The shot before ended where the removed one started: it is open again.
+    if (prev && prev.outcome === 'normal') {
+      const reopened: LoggedShot = { ...prev, end: null, endAcc: null }
+      delete reopened.endLie
+      kept[kept.length - 1] = reopened
+    }
+    set({ logs: { ...logs, [key]: kept } })
+  },
+  clearLog: (key) => {
+    set({ logs: Object.fromEntries(Object.entries(get().logs).filter(([k]) => k !== key)) })
+  },
+  setLearn: (learn) => set({ learn }),
+    }),
+    {
+      name: LOG_STORAGE_KEY,
+      version: 1,
+      storage: createJSONStorage(logStorage),
+      // Only the log and the toggle outlive the tab; player.json is never written (part 15).
+      partialize: (s) => ({ logs: s.logs, learn: s.learn }),
+    },
+  ),
+)
 
 // --- derived recommendation (M1: a direct grid lookup) -------------------------------------
 
