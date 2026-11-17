@@ -25,6 +25,7 @@ const FROM_LIE_NAME: Partial<Record<Lie, LieName>> = {
   3: 'rough',
   4: 'bunker',
   5: 'fairway',
+  8: 'rough', // part 17: only the app can put a ball in the trees; it plays as rough
 }
 
 function rollMultiplier(player: Player, landingLie: Lie): number {
@@ -100,6 +101,67 @@ export function firstTreeDistance(b: HoleBundle, from: XY, bearingDeg: number, m
   return Infinity
 }
 
+// Flight height (part 17, amended): three estimates of ours, the same as the solver's.
+export const TREE_HEIGHT_M = 15
+export const APEX_MAX_M = 24
+export const APEX_PER_CARRY = 0.3
+export const DESCENT_STEP_M = 5
+
+/**
+ * Meters of a carry spent below the canopy at each end. The carry is a parabola with apex
+ * min(APEX_MAX_M, APEX_PER_CARRY x carry); a shot whose apex does not clear TREE_HEIGHT_M
+ * is low for its whole carry. Same formula as `low_flight_m` in the solver.
+ */
+export function lowFlightM(carry: number): number {
+  const apex = Math.min(APEX_MAX_M, APEX_PER_CARRY * carry)
+  if (apex <= TREE_HEIGHT_M) return Math.max(carry, 0)
+  return (carry * (1 - Math.sqrt(1 - TREE_HEIGHT_M / apex))) / 2
+}
+
+/** The point `TREE_STEP_BACK_M` before distance `hit` on the line, walked back out of any tree cell. */
+function restBefore(b: HoleBundle, from: XY, bearingDeg: number, hit: number): XY {
+  const rad = (bearingDeg * Math.PI) / 180
+  const sx = Math.sin(rad)
+  const sy = Math.cos(rad)
+  let d = Math.max(hit - TREE_STEP_BACK_M, 0)
+  while (d > 0 && isTree(b, from.x + d * sx, from.y + d * sy)) d = Math.max(d - TREE_STEP_BACK_M, 0)
+  return { x: from.x + d * sx, y: from.y + d * sy }
+}
+
+/**
+ * Where trees stop a carry of length `carry` from `from` along `bearingDeg`, or null when
+ * the ball gets through. Climb: any tree point within the low part of the carry. Descent:
+ * the landing point, or the points one and two DESCENT_STEP_M short of it when they are
+ * past the low part, taking the first on the line.
+ */
+function carryStop(b: HoleBundle, from: XY, bearingDeg: number, carry: number): XY | null {
+  if (carry <= 0) return null
+  const low = lowFlightM(carry)
+  const climb = firstTreeDistance(b, from, bearingDeg, low)
+  if (climb !== Infinity) return restBefore(b, from, bearingDeg, climb)
+  const rad = (bearingDeg * Math.PI) / 180
+  const sx = Math.sin(rad)
+  const sy = Math.cos(rad)
+  for (const j of [2, 1, 0]) {
+    const s = carry - j * DESCENT_STEP_M
+    if (s <= 0 || (j > 0 && s <= low)) continue
+    if (isTree(b, from.x + s * sx, from.y + s * sy)) return restBefore(b, from, bearingDeg, s)
+  }
+  return null
+}
+
+/** Where trees stop a roll of `length` from the landing point (always on the ground), or null. */
+function rollStop(b: HoleBundle, land: XY, bearingDeg: number, length: number): XY | null {
+  let hit = firstTreeDistance(b, land, bearingDeg, length)
+  if (hit === Infinity) {
+    // The end point can sit in a tree cell between two march samples.
+    const rad = (bearingDeg * Math.PI) / 180
+    if (!isTree(b, land.x + length * Math.sin(rad), land.y + length * Math.cos(rad))) return null
+    hit = length
+  }
+  return restBefore(b, land, bearingDeg, hit)
+}
+
 /**
  * Drop cell for a water landing: the nearest fairway or rough cell at or below the
  * water cell's row (the tee side), as geometry.compute_drop_index.
@@ -171,7 +233,11 @@ export function sampleShot(
   const landLie = locate(b, land).lie
   const roll = (params.mu_r + params.sigma_r * rollZ) * mult.roll * rollMultiplier(player, landLie)
   const ua = ((bearing + dir_deg) * Math.PI) / 180
-  const to = { x: land.x + roll * Math.sin(ua), y: land.y + roll * Math.cos(ua) }
+  let to = { x: land.x + roll * Math.sin(ua), y: land.y + roll * Math.cos(ua) }
+  // Part 17: trees stop a ball that is below the canopy. Carry first, then the roll.
+  const stopped = carryStop(b, from, bearing + dir_deg + theta, carry)
+  if (stopped) to = stopped
+  else if (roll !== 0) to = rollStop(b, land, bearing + dir_deg + (roll < 0 ? 180 : 0), Math.abs(roll)) ?? to
   const final = locate(b, to)
   const water = final.lie === 6
   const ob = final.lie === 7

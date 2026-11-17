@@ -4,7 +4,7 @@ import fixture from '../../../docs/fixtures/shot_samples.json'
 import treeRays from '../../../docs/fixtures/tree_rays.json'
 import { cellOf } from './grid'
 import { mulberry32 } from './rng'
-import { expectedPutts, firstTreeDistance, sampleShot, TREE_STEP_BACK_M } from './shot'
+import { expectedPutts, firstTreeDistance, lowFlightM, sampleShot, TREE_STEP_BACK_M } from './shot'
 import { readToyBundle, toyPlayerDoc } from './toyFiles'
 import type { Lie, Mode } from './types'
 
@@ -164,5 +164,105 @@ describe('firstTreeDistance parity with docs/fixtures/tree_rays.json (part 17)',
 
   it('respects maxM', () => {
     expect(firstTreeDistance(b, { x: 27.5, y: 2.5 }, 0, 10)).toBe(Infinity)
+  })
+})
+
+describe('trees block the ball in sampleShot (part 17)', () => {
+  const toy = readToyBundle()
+  const trees = { ...toy, lie: Uint8Array.from(treeRays.lie) }
+  const clear = { ...toy, lie: Uint8Array.from(treeRays.lie.map((v) => (v === 8 ? 2 : v))) }
+  const meanShot = () => {
+    const vals = [0, 0, 0.5, 0, 0, 0, 0]
+    let k = 0
+    return () => vals[k++ % vals.length]
+  }
+  const tee = { x: 27.5, y: 2.5 } // straight below the row (y 20 to 25, x 15 to 40)
+
+  it('a shot through the row rests 2.5 m short of it, no roll, no penalty', () => {
+    const s = sampleShot(trees, player, tee, 2, 'test7i', 0, 'drop', meanShot())
+    expect(s.x).toBeCloseTo(27.5, 9)
+    expect(s.y).toBeCloseTo(2.5 + 18 - TREE_STEP_BACK_M, 9) // first tree sample is 18 m out
+    expect(s.lie).toBe(2)
+    expect(s.reward).toBe(-1)
+    expect(s.next).toEqual({ x: s.x, y: s.y })
+    const free = sampleShot(clear, player, tee, 2, 'test7i', 0, 'drop', meanShot())
+    expect(free.y).toBeCloseTo(2.5 + 25 + 2, 9)
+  })
+
+  it('a shot that misses the trees is unchanged', () => {
+    const from = { x: 7.5, y: 2.5 }
+    const bearing = (Math.atan2(27.5 - 7.5, 47.5 - 2.5) * 180) / Math.PI
+    const a = sampleShot(trees, player, from, 2, 'test7i', -bearing, 'drop', meanShot())
+    const c = sampleShot(clear, player, from, 2, 'test7i', -bearing, 'drop', meanShot())
+    expect(a).toEqual(c)
+    expect(a.y).toBeCloseTo(29.5, 9)
+  })
+
+  it('a roll into the row stops before it', () => {
+    const runner = { ...player.clubs.test7i, mu_c: 14, mu_r: 6 }
+    const p = { ...player, clubs: { test7i: runner } }
+    const s = sampleShot(trees, p, tee, 2, 'test7i', 0, 'drop', meanShot())
+    expect(s.y).toBeCloseTo(16.5 + 4 - TREE_STEP_BACK_M, 9) // lands 16.5, first tree sample 4 m on
+    expect(s.lie).toBe(2)
+    const free = sampleShot(clear, p, tee, 2, 'test7i', 0, 'drop', meanShot())
+    expect(free.y).toBeCloseTo(22.5, 9)
+  })
+
+  it('no sampled shot ever rests in, or beyond, the row', () => {
+    const rng = mulberry32(7)
+    for (let k = 0; k < 300; k++) {
+      const s = sampleShot(trees, player, tee, 2, 'test7i', 0, 'drop', rng)
+      expect(s.lie).not.toBe(8)
+      expect(s.y).toBeLessThan(20)
+    }
+  })
+
+  it('a ball that starts in the trees can chip out, from a rough lie', () => {
+    const s = sampleShot(trees, player, { x: 27.5, y: 22.5 }, 8, 'test7i', 0, 'drop', meanShot())
+    expect(s.y).toBeGreaterThan(40) // 25 x 0.9 carry on, not stopped by its own clump
+  })
+})
+
+describe('flight height (part 17, amended)', () => {
+  const toy = readToyBundle()
+  const meanShot = () => {
+    const vals = [0, 0, 0.5, 0, 0, 0, 0]
+    let k = 0
+    return () => vals[k++ % vals.length]
+  }
+
+  it('lowFlightM reproduces the fixture', () => {
+    expect(treeRays.flight.cases).toHaveLength(9)
+    for (const c of treeRays.flight.cases) expect(lowFlightM(c.carry_m)).toBeCloseTo(c.low_m, 9)
+  })
+
+  /** A 30 x 10 fairway strip, 150 m long, with one full-width tree row. */
+  function tall(treeRow: number) {
+    const rows = 30
+    const lie = new Uint8Array(rows * 10).fill(2)
+    for (let c = 0; c < 10; c++) lie[treeRow * 10 + c] = 8
+    return { ...toy, meta: { ...toy.meta, rows, pin_xy: [27.5, 142.5] as [number, number] }, lie }
+  }
+  const long = { ...player.clubs.test7i, mu_c: 100, mu_r: 0, sigma_r: 0 }
+  const p = { ...player, clubs: { test7i: long } }
+  const tee = { x: 27.5, y: 2.5 }
+
+  it('a full shot flies over trees in the middle of its carry', () => {
+    const s = sampleShot(tall(12), p, tee, 2, 'test7i', 0, 'drop', meanShot()) // row at y 60 to 65
+    expect(s.y).toBeCloseTo(102.5, 9)
+    expect(s.reward).toBe(-1)
+  })
+
+  it('is stopped by trees inside the first 19.4 m', () => {
+    const s = sampleShot(tall(3), p, tee, 2, 'test7i', 0, 'drop', meanShot()) // row at y 15 to 20
+    expect(s.y).toBeCloseTo(2.5 + 13 - TREE_STEP_BACK_M, 9) // first tree sample 13 m out
+    expect(s.lie).toBe(2)
+  })
+
+  it('is stopped coming down into trees', () => {
+    const s = sampleShot(tall(20), p, tee, 2, 'test7i', 0, 'drop', meanShot()) // row at y 100 to 105
+    expect(s.y).toBeLessThan(100)
+    expect(s.y).toBeGreaterThanOrEqual(95)
+    expect(s.lie).toBe(2)
   })
 })
