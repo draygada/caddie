@@ -6,6 +6,7 @@
 import { create } from 'zustand'
 import { createJSONStorage, persist, type StateStorage } from 'zustand/middleware'
 
+import { TARGET_RESET_M } from './lib/aim'
 import { lieAt, policyAt, valueNearest } from './lib/grid'
 import { learnedPlayer, type Observation } from './lib/learn'
 import { createRolloutWorker, RolloutClient, type RolloutResult } from './lib/rollout'
@@ -40,6 +41,10 @@ export interface State {
   lieOverride: Lie | null
   gps: Gps | null
   recommendation: Recommendation | null
+  /** Part 22: where the player is aiming; null is the caddie's aim. */
+  target: XY | null
+  /** Part 22: the club the player chose; null picks it from the target distance. */
+  aimClub: string | null
   /** Part 12: route ball and lie changes through the rollout worker (part 14 turns it on). */
   useWorker: boolean
   /** Part 15: the shot log, one list per round, keyed by `logKey(date, hole)`. Persisted. */
@@ -55,6 +60,10 @@ export interface State {
   setGps: (g: Gps | null) => void
   setRecommendation: (r: Recommendation | null) => void
   setUseWorker: (on: boolean) => void
+  setTarget: (p: XY | null) => void
+  setAimClub: (club: string | null) => void
+  /** Back to the caddie's aim and club. */
+  resetAim: () => void
   /** Record a shot from the ball with `club` (default: the recommended club); ends the open shot here. */
   hitShot: (club?: string, now?: number) => void
   /** Close the open shot at the ball as holed-out-of-reach ("On the green") or as a penalty. */
@@ -78,6 +87,8 @@ export const initialState = {
   lieOverride: null,
   gps: null,
   recommendation: null,
+  target: null as XY | null,
+  aimClub: null as string | null,
   useWorker: false,
   logs: {} as Record<string, LoggedShot[]>,
   learn: false,
@@ -117,6 +128,9 @@ function sameXY(a: XY, b: readonly [number, number]): boolean {
   return a.x === b[0] && a.y === b[1]
 }
 
+/** Where the ball was when the player last touched the aim (part 22 staleness rule). */
+let aimedFrom: XY | null = null
+
 export const useStore = create<State>()(
   persist(
     (set, get) => ({
@@ -141,6 +155,15 @@ export const useStore = create<State>()(
   setGps: (gps) => set({ gps }),
   setRecommendation: (recommendation) => set({ recommendation }),
   setUseWorker: (useWorker) => set({ useWorker }),
+  setTarget: (target) => {
+    aimedFrom = get().ball
+    set({ target })
+  },
+  setAimClub: (aimClub) => {
+    aimedFrom = get().ball
+    set({ aimClub })
+  },
+  resetAim: () => set({ target: null, aimClub: null }),
   hitShot: (club, now = Date.now()) => {
     const s = get()
     const here = standing(s)
@@ -260,6 +283,19 @@ let rolloutClient: RolloutClientLike | null = null
 export function setRolloutClient(client: RolloutClientLike | null): void {
   rolloutClient = client
 }
+
+// --- part 22: the player's aim goes stale -----------------------------------------------------
+
+/** A new hole, or a ball more than `TARGET_RESET_M` from where the aim was set, clears the aim. */
+useStore.subscribe((state, prev) => {
+  if (state.target === null && state.aimClub === null) return
+  const moved =
+    state.ball !== prev.ball &&
+    state.ball !== null &&
+    aimedFrom !== null &&
+    Math.hypot(state.ball.x - aimedFrom.x, state.ball.y - aimedFrom.y) > TARGET_RESET_M
+  if (state.bundle !== prev.bundle || state.ball === null || moved) state.resetAim()
+})
 
 // --- part 15: learning from the log ------------------------------------------------------------
 
