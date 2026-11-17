@@ -466,6 +466,70 @@ def _block_at_trees(
     return fx, fy
 
 
+def stop_at_trees_exact(
+    hole: Hole,
+    x0: float | np.ndarray,
+    y0: float | np.ndarray,
+    carry_bearing_deg: np.ndarray,
+    carry: np.ndarray,
+    lx: np.ndarray,
+    ly: np.ndarray,
+    roll_bearing_deg: float | np.ndarray,
+    run: np.ndarray,
+    fx: np.ndarray,
+    fy: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """The tree rule for shots from continuous points, marched exactly (no tables).
+
+    The reference version: :func:`step_batch` approximates it with per-cell tables, and
+    ``sampleShot`` in the app's shot.ts is the same procedure one shot at a time. All
+    arguments broadcast to the shape of ``carry``. Returns the final resting points.
+    """
+    if not np.any(hole.lie == Lie.TREES):
+        return fx, fy
+    shape = np.shape(carry)
+    x0, y0 = np.broadcast_to(x0, shape).astype(float), np.broadcast_to(y0, shape).astype(float)
+    cb = np.broadcast_to(carry_bearing_deg, shape).astype(float)
+    rb = np.broadcast_to(roll_bearing_deg, shape).astype(float)
+    fx, fy = np.array(fx, dtype=float), np.array(fy, dtype=float)
+    low = low_flight_m(carry)
+    sx, sy = np.sin(np.radians(cb)), np.cos(np.radians(cb))
+
+    flying = carry > 0
+    climb = tree_march(hole, x0, y0, cb, max_m=max(float(low.max()), RAY_STEP_M))
+    stop = np.where(flying & (climb <= low), climb, np.inf)
+    down = np.full(shape, np.inf)
+    for j in range(3):  # points further back are earlier on the line, so they win
+        s = carry - j * DESCENT_STEP_M
+        ok = flying & (s > 0) & ((s > low) if j else True)
+        down = np.where(ok & _is_tree(hole, x0 + sx * s, y0 + sy * s), s, down)
+    stop = np.minimum(stop, down)
+    stopped = np.isfinite(stop)
+    if stopped.any():
+        rest = np.maximum(stop[stopped] - TREE_STEP_BACK_M, 0.0)
+        fx[stopped], fy[stopped] = _walk_back(
+            hole, x0[stopped], y0[stopped], sx[stopped], sy[stopped], rest
+        )
+
+    rolling = ~stopped & (run != 0)
+    if rolling.any():
+        r = np.abs(run[rolling])
+        b = rb[rolling] + np.where(run[rolling] < 0, 180.0, 0.0)
+        ux, uy = np.sin(np.radians(b)), np.cos(np.radians(b))
+        px, py = np.asarray(lx, dtype=float)[rolling], np.asarray(ly, dtype=float)[rolling]
+        hit = tree_march(hole, px, py, b, max_m=float(r.max()) + RAY_STEP_M)
+        hit = np.where(hit <= r, hit, np.inf)
+        end_in_trees = np.isinf(hit) & _is_tree(hole, px + ux * r, py + uy * r)
+        hit = np.where(end_in_trees, r, hit)
+        blocked = np.isfinite(hit)
+        if blocked.any():
+            idx = np.flatnonzero(rolling.reshape(-1))[blocked]
+            rest = np.maximum(hit[blocked] - TREE_STEP_BACK_M, 0.0)
+            qx, qy = _walk_back(hole, px[blocked], py[blocked], ux[blocked], uy[blocked], rest)
+            fx.reshape(-1)[idx], fy.reshape(-1)[idx] = qx, qy
+    return fx, fy
+
+
 def pin_bearing_deg(hole: Hole, x: np.ndarray, y: np.ndarray) -> np.ndarray:
     """Bearing from (x, y) to the pin, degrees clockwise from +y, in (-180, 180]."""
     return np.degrees(np.arctan2(hole.pin_xy[0] - x, hole.pin_xy[1] - y))

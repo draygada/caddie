@@ -685,3 +685,68 @@ def test_flight_fixture_matches_python():
         assert float(low_flight_m(np.array([case["carry_m"]]))[0]) == pytest.approx(
             case["low_m"], abs=1e-12
         )
+
+
+# part 17: the exact rule for continuous points (same literals as app/src/lib/shot.test.ts) ----
+
+
+def _exact(hole, x, y, bearing, carry, roll):
+    from caddie.mdp import stop_at_trees_exact
+
+    rad = np.radians(bearing)
+    lx, ly = x + carry * np.sin(rad), y + carry * np.cos(rad)
+    fx, fy = lx + roll * np.sin(rad), ly + roll * np.cos(rad)
+    c = np.array([carry])
+    out = stop_at_trees_exact(
+        hole,
+        x,
+        y,
+        np.array([bearing]),
+        c,
+        np.array([lx]),
+        np.array([ly]),
+        bearing,
+        np.array([roll]),
+        np.array([fx]),
+        np.array([fy]),
+    )
+    return float(out[0][0]), float(out[1][0])
+
+
+def test_exact_rule_matches_the_app_on_the_toy_tree_hole():
+    from tests.fixtures.toy_hole import toy_tree_hole
+
+    hole = toy_tree_hole()
+    assert _exact(hole, 27.5, 2.5, 0.0, 25.0, 2.0) == pytest.approx((27.5, 2.5 + 18 - 2.5))  # climb
+    assert _exact(hole, 7.5, 2.5, 0.0, 25.0, 2.0) == pytest.approx((7.5, 29.5))  # misses the row
+    assert _exact(hole, 27.5, 2.5, 0.0, 14.0, 6.0) == pytest.approx((27.5, 16.5 + 4 - 2.5))  # roll
+    assert _exact(hole, 27.5, 22.5, 0.0, 22.5, 0.0) == pytest.approx(
+        (27.5, 45.0)
+    )  # chips out of the clump
+    clear = toy_hole(hazards=False)
+    assert _exact(clear, 27.5, 2.5, 0.0, 25.0, 2.0) == pytest.approx((27.5, 29.5))
+
+
+@pytest.mark.parametrize(("tree_row", "y"), [(12, 102.5), (3, 2.5 + 13 - 2.5)])
+def test_exact_rule_on_the_tall_hole(tree_row, y):
+    from tests.fixtures.toy_hole import tall_tree_hole
+
+    assert _exact(tall_tree_hole(tree_row), 27.5, 2.5, 0.0, 100.0, 0.0) == pytest.approx((27.5, y))
+
+
+def test_exact_rule_stops_a_ball_coming_down_into_trees():
+    from tests.fixtures.toy_hole import tall_tree_hole
+
+    _, y = _exact(tall_tree_hole(20), 27.5, 2.5, 0.0, 100.0, 0.0)  # row at y 100 to 105
+    assert 95.0 <= y < 100.0
+
+
+def test_shots_from_point_respects_trees():
+    from caddie.online import shots_from_point
+    from tests.fixtures.toy_hole import toy_tree_hole
+
+    hole, player = toy_tree_hole(), toy_player()
+    nx, ny, cost = shots_from_point(
+        hole, player, 27.5, 2.5, Lie.FAIRWAY, player.clubs[TOY_CLUB], 0.0, make_draws(200), "drop"
+    )
+    assert np.all(ny < 20.0) and np.all(cost == 1.0)
