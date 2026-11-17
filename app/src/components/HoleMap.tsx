@@ -174,9 +174,13 @@ function MapButton({
 export interface HoleMapProps {
   bundle: HoleBundle | null
   tee: string
+  /** Part 21: which layers this mode carries. */
+  parts?: { logger: boolean; playItOut: boolean; gps: boolean }
 }
 
-export function HoleMap({ bundle, tee }: HoleMapProps) {
+const ALL_PARTS = { logger: true, playItOut: true, gps: true }
+
+export function HoleMap({ bundle, tee, parts = ALL_PARTS }: HoleMapProps) {
   const container = useRef<HTMLDivElement>(null)
   const mapRef = useRef<MLMap | null>(null)
   const [map, setMap] = useState<MLMap | null>(null)
@@ -295,8 +299,8 @@ export function HoleMap({ bundle, tee }: HoleMapProps) {
     <div ref={container} className="h-full w-full">
       {map && <BallMarker map={map} />}
       {map && <AimArrow map={map} />}
-      {map && <PlayItOutLayer map={map} />}
-      {map && <ShotLogLayer map={map} />}
+      {map && parts.playItOut && <PlayItOutLayer map={map} />}
+      {map && parts.logger && <ShotLogLayer map={map} />}
       {map && <MapLabels map={map} />}
       <div className="absolute top-16 right-2 z-10 flex flex-col gap-2 safe-top">
         <MapButton
@@ -316,7 +320,7 @@ export function HoleMap({ bundle, tee }: HoleMapProps) {
             <path d="M12 2v4M12 18v4M2 12h4M18 12h4" />
           </svg>
         </MapButton>
-        {map && <GpsBadge map={map} />}
+        {map && parts.gps && <GpsBadge map={map} />}
       </div>
     </div>
   )

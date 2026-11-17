@@ -73,7 +73,16 @@ function Skeleton() {
   )
 }
 
-export function CaddiePanel() {
+export interface CaddiePanelProps {
+  /** Part 21: which controls this mode carries (`panelParts` in HoleScreen). All on by default. */
+  parts?: { logger: boolean; learn: boolean; playItOut: boolean }
+  /** What to say before there is a ball. */
+  emptyText?: string
+}
+
+const ALL_PARTS = { logger: true, learn: true, playItOut: true }
+
+export function CaddiePanel({ parts = ALL_PARTS, emptyText = 'Tap the map to place the ball' }: CaddiePanelProps) {
   const recommendation = useStore((s) => s.recommendation)
   const ball = useStore((s) => s.ball)
   const bundle = useStore((s) => s.bundle)
@@ -94,7 +103,7 @@ export function CaddiePanel() {
   if (!bundle) {
     body = <Skeleton />
   } else if (!ball) {
-    body = <p className="text-body text-ink-2">Tap the map or turn on GPS</p>
+    body = <p className="text-body text-ink-2">{emptyText}</p>
   } else if (onGreen && putts !== null) {
     body = (
       <div className="grid grid-cols-3 gap-4">
@@ -160,7 +169,7 @@ export function CaddiePanel() {
 
       <LieButtons />
       {body}
-      <ShotLogger />
+      {parts.logger && <ShotLogger />}
 
       <div id="caddie-details" className={`${expanded ? 'flex' : 'hidden'} flex-col gap-3 pb-2 md:flex`}>
         {recommendation && offsetYd !== null && (
@@ -177,9 +186,9 @@ export function CaddiePanel() {
             <span>{par + 3}</span>
           </div>
         </div>
-        <PlayItOut />
-        <LearnBadge />
-        <ExportLogButton />
+        {parts.playItOut && <PlayItOut />}
+        {parts.learn && <LearnBadge />}
+        {parts.learn && <ExportLogButton />}
       </div>
     </section>
   )
