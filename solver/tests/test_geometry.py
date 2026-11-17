@@ -357,3 +357,70 @@ def test_build_hole_merges_traced_water_ob_and_pin(tmp_path):
     lon, lat = to_lonlat(*unrotate(*h.pin_xy, h.rotation_deg), h.origin_lon, h.origin_lat)
     assert abs(lon - traced_pin[0]) < 1e-6 and abs(lat - traced_pin[1]) < 1e-6
     assert "water" in h.polygons_xy and "ob" in h.polygons_xy
+
+
+# part 17 slice 1: trees from OSM ---------------------------------------------
+
+
+def _extract_osm():
+    import importlib.util
+
+    path = Path(__file__).resolve().parents[1] / "scripts" / "extract_osm.py"
+    spec = importlib.util.spec_from_file_location("extract_osm", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+TREE_OSM = {
+    "elements": [
+        {"type": "node", "id": 1, "lat": 37.42, "lon": -122.18, "tags": {"natural": "tree"}},
+        {"type": "node", "id": 2, "lat": 37.4200, "lon": -122.1810},
+        {"type": "node", "id": 3, "lat": 37.4205, "lon": -122.1810},
+        {"type": "node", "id": 4, "lat": 37.4205, "lon": -122.1805},
+        {"type": "way", "id": 10, "nodes": [2, 3, 4, 2], "tags": {"natural": "wood"}},
+        {"type": "way", "id": 11, "nodes": [2, 3, 4], "tags": {"natural": "tree_row"}},
+    ]
+}
+
+
+def test_tree_query_asks_for_trees_woods_and_tree_rows():
+    q = _extract_osm().TREE_QUERY
+    assert '"natural"="tree"' in q
+    assert "wood" in q and "tree_row" in q
+
+
+def test_converter_handles_tree_features():
+    gj = _extract_osm().osm_to_geojson(TREE_OSM)
+    by_id = {f["properties"]["osm_id"]: f for f in gj["features"]}
+    assert by_id[1]["geometry"]["type"] == "Point"
+    assert by_id[10]["geometry"]["type"] == "Polygon"
+    assert by_id[11]["geometry"]["type"] == "LineString"
+    assert set(by_id) == {1, 10, 11}  # untagged nodes give no feature
+
+
+def test_merge_trees_appends_once_and_keeps_existing_features():
+    mod = _extract_osm()
+    existing = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": None,
+                "properties": {"golf": "green", "osm_type": "way", "osm_id": 99},
+            }
+        ],
+    }
+    trees = mod.osm_to_geojson(TREE_OSM)
+    merged = mod.merge_trees(existing, trees)
+    assert merged["features"][0]["properties"]["osm_id"] == 99
+    assert len(merged["features"]) == 4
+    again = mod.merge_trees(merged, trees)
+    assert len(again["features"]) == 4
+
+
+def test_committed_osm_has_trees(osm):
+    assert len(_features(osm, "natural", "tree")) > 1000
+    assert len(_features(osm, "natural", "wood")) > 20
+    assert len(_features(osm, "natural", "tree_row")) >= 5
+    assert len(_features(osm, "golf", "green")) == 29  # the golf features are untouched
