@@ -30,6 +30,22 @@ The lie row of part 11 (Auto, Fairway, Rough, Bunker) is removed from both modes
 
 The strokes-to-go heatmap layer, its toggle button on the map and its legend in the panel are removed from both modes. The map shows the satellite image, the terrain outlines, the ball, the aim and the pin. `lib/heatmap.ts` stays, unused by the app, so the layer can return; the solver still writes its own heatmap figures. This supersedes the heatmap slices of part 10 and `docs/design.md` section 5 for the app.
 
+## Setup before the hole, and no top bar
+
+Choosing a mode on Home opens a second step that asks two things: the starting hole (10, 11 or 12, nothing else) and the tees. "Start" opens the hole screen. The toy hole is no longer offered in the app.
+
+The top bar is removed from the hole screen, so the hole and the tees cannot be changed in the middle of a hole. Everything it carried moves or goes:
+
+| Was in the top bar | Now |
+| --- | --- |
+| Hole, par, yardage, tees | One read-only line at the top of the bottom panel: "Hole 11 · Par 4 · 342 yd · Black tees" |
+| Hole picker, tee picker | The setup step only |
+| Penalty-mode control | Removed; the app always uses Drop, the rule on a real course. Mulligan and Replay remain solver modes |
+| Home button | "End round" in the expanded panel |
+| Theme toggle | Home |
+
+The expanded panel also has "Next hole", which loads the next of 10, 11, 12 with the same tees and is absent on hole 12. If the chosen hole has no bundle yet, the setup step says so and Start is disabled.
+
 ## Interfaces
 
 ```ts
