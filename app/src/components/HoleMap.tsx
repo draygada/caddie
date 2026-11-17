@@ -20,7 +20,7 @@ import { type ReactNode, useEffect, useRef, useState } from 'react'
 
 import { AimArrow } from './AimArrow'
 import { BallMarker } from './BallMarker'
-import { GpsBadge } from './GpsBadge'
+import { GpsLayer } from './GpsBadge'
 import { MapLabels } from './MapLabels'
 import { PlayItOutLayer } from './PlayItOut'
 import { ShotLogLayer } from './ShotLogger'
@@ -301,6 +301,7 @@ export function HoleMap({ bundle, tee, parts = ALL_PARTS }: HoleMapProps) {
       {map && <AimArrow map={map} />}
       {map && parts.playItOut && <PlayItOutLayer map={map} />}
       {map && parts.logger && <ShotLogLayer map={map} />}
+      {map && parts.gps && <GpsLayer map={map} />}
       {map && <MapLabels map={map} />}
       <div className="absolute top-16 right-2 z-10 flex flex-col gap-2 safe-top">
         <MapButton
@@ -320,7 +321,6 @@ export function HoleMap({ bundle, tee, parts = ALL_PARTS }: HoleMapProps) {
             <path d="M12 2v4M12 18v4M2 12h4M18 12h4" />
           </svg>
         </MapButton>
-        {map && parts.gps && <GpsBadge map={map} />}
       </div>
     </div>
   )

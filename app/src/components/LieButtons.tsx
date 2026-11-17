@@ -1,5 +1,5 @@
 /**
- * Lie row: Auto, Fairway, Rough, Bunker as 56 px segments (pressed with a glove). Auto
+ * Lie row, labelled "Ball is in" (where the ball is now, not where to aim): Auto, Fairway, Rough, Bunker as 56 px segments (pressed with a glove). Auto
  * clears the override. The filled segment is `lieOverride ?? lieAt(bundle, ball)`.
  */
 import { lieAt } from '../lib/grid'
@@ -28,7 +28,7 @@ export function LieButtons() {
   return (
     <div className="flex flex-col gap-1">
       <span className="label" id="lie-label">
-        Lie
+        Ball is in
       </span>
       <div className="flex gap-2" role="group" aria-labelledby="lie-label">
         <button

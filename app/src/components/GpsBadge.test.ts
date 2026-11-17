@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import { gridToLonLat, metresBetween } from '../lib/geo'
 import { readToyBundle } from '../lib/toyFiles'
-import { accuracyRing, CIRCLE_POINTS, gpsLabel } from './GpsBadge'
+import { accuracyRing, CIRCLE_POINTS, gpsLabel, gpsProblemText } from './GpsBadge'
 
 describe('accuracyRing', () => {
   const meta = readToyBundle().meta
@@ -27,5 +27,16 @@ describe('gpsLabel', () => {
     expect(gpsLabel({ ...off, enabled: true, error: 'User denied Geolocation' }, null)).toBe(
       'GPS: User denied Geolocation',
     )
+  })
+})
+
+describe('gpsProblemText (part 21)', () => {
+  it('tells a refused permission apart from a fix that will not come', () => {
+    expect(gpsProblemText('User denied Geolocation')).toBe(
+      'Location is turned off for this site. Allow it in your browser settings, then try again.',
+    )
+    expect(gpsProblemText('Permission denied')).toMatch(/^Location is turned off/)
+    expect(gpsProblemText('Timeout expired')).toBe('Cannot find you yet: Timeout expired.')
+    expect(gpsProblemText('This browser has no location service')).toBe('Cannot find you yet: This browser has no location service.')
   })
 })

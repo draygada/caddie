@@ -5,11 +5,12 @@
  */
 import { useState } from 'react'
 
+import { useGps } from '../hooks/useGps'
 import { MODE_HELP, MODE_LABEL } from '../lib/tokens'
 import type { Mode } from '../lib/types'
 import { type HoleId, type Screen, useStore } from '../store'
 import { CaddiePanel, distanceToPinM, toYards } from './CaddiePanel'
-import { GpsStatusText } from './GpsBadge'
+import { GpsNotice, GpsStatusText } from './GpsBadge'
 import { HoleMap } from './HoleMap'
 
 export const HOLES: HoleId[] = [10, 11, 12, 'toy']
@@ -125,6 +126,10 @@ export function HoleScreen({ screen, theme, onToggleTheme, error }: HoleScreenPr
   const setScreen = useStore((s) => s.setScreen)
   const [moreOpen, setMoreOpen] = useState(false)
   const parts = panelParts(screen)
+  // GPS is on for as long as the Play screen is; leaving it stops the watch.
+  const [attempt, setAttempt] = useState(0)
+  useGps(parts.gps, attempt)
+  const notice = parts.gps ? <GpsNotice onRetry={() => setAttempt((n) => n + 1)} /> : null
 
   const tees = bundle ? Object.keys(bundle.meta.tees) : [tee]
   const teeXY = bundle?.meta.tees[tee] ?? bundle?.meta.tee_xy
@@ -181,11 +186,11 @@ export function HoleScreen({ screen, theme, onToggleTheme, error }: HoleScreenPr
         </div>
       </header>
           <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 md:hidden">
-            <CaddiePanel parts={parts} emptyText={EMPTY_BALL_TEXT[screen]} />
+            <CaddiePanel parts={parts} emptyText={EMPTY_BALL_TEXT[screen]} notice={notice} />
           </div>
         </div>
         <div className="hidden h-full md:block">
-          <CaddiePanel parts={parts} emptyText={EMPTY_BALL_TEXT[screen]} />
+          <CaddiePanel parts={parts} emptyText={EMPTY_BALL_TEXT[screen]} notice={notice} />
         </div>
       </main>
 

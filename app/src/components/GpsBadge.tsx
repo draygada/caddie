@@ -1,12 +1,12 @@
 /**
- * The GPS toggle on the map, the accuracy circle around the live position, and the status
- * text (part 14). The button press is the user gesture iOS Safari needs before it will
- * hand out a position.
+ * The accuracy circle around the live position, the status text (part 14) and the notice
+ * for a failed watch. Since part 21 there is no toggle: GPS is on in Play and absent in
+ * Simulate, and tapping "Play with GPS" on the home page is the gesture iOS Safari needs.
  */
 import type { GeoJSONSource, Map as MLMap } from 'maplibre-gl'
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 
-import { type GpsStatus, useGps, useGpsStatus } from '../hooks/useGps'
+import { type GpsStatus, useGpsStatus } from '../hooks/useGps'
 import { gridToLonLat } from '../lib/geo'
 import { whenStyleReady } from '../lib/mapReady'
 import { token } from '../lib/tokens'
@@ -45,21 +45,12 @@ export function GpsStatusText() {
   return <span className={status.error ? 'text-bad' : undefined}>{gpsLabel(status, gps)}</span>
 }
 
-/** The toggle button; with a `map`, also draws the accuracy circle. */
-export function GpsBadge({ map }: { map?: MLMap }) {
-  const [on, setOn] = useState(false)
-  const status = useGpsStatus()
+/** The accuracy circle around the live position. GPS itself is started by the Play screen (part 21). */
+export function GpsLayer({ map }: { map: MLMap }) {
   const gps = useStore((s) => s.gps)
   const bundle = useStore((s) => s.bundle)
-  useGps(on)
-
-  // A refused permission or a missing location service turns the toggle back off.
-  useEffect(() => {
-    if (on && status.error && !status.enabled) setOn(false)
-  }, [on, status.error, status.enabled])
 
   useEffect(() => {
-    if (!map) return
     const data = {
       type: 'FeatureCollection' as const,
       features:
@@ -86,22 +77,30 @@ export function GpsBadge({ map }: { map?: MLMap }) {
     })
   }, [map, bundle, gps])
 
-  const label = gpsLabel(status, gps)
+  return null
+}
+
+/** Plain words for a GPS error: a refused permission, or a fix that will not come. */
+export function gpsProblemText(error: string): string {
+  if (/denied|permission/i.test(error)) return 'Location is turned off for this site. Allow it in your browser settings, then try again.'
+  return `Cannot find you yet: ${error.replace(/\.$/, '')}.`
+}
+
+/** Shown in the Play panel when the watch has failed. The button press is a fresh user gesture. */
+export function GpsNotice({ onRetry }: { onRetry: () => void }) {
+  const error = useGpsStatus((s) => s.error)
+  if (!error) return null
   return (
-    <button
-      type="button"
-      aria-label={on ? `Turn GPS off. ${label}` : 'Turn GPS on'}
-      title={label}
-      aria-pressed={on}
-      onClick={() => {
-        if (!on) useGpsStatus.setState({ error: null })
-        setOn((v) => !v)
-      }}
-      className={`num flex h-12 w-12 items-center justify-center rounded-xl text-caption font-semibold shadow-[0_1px_2px_rgba(0,0,0,0.2),0_4px_12px_rgba(0,0,0,0.12)] transition-colors ${
-        on ? 'bg-gps text-white' : 'bg-surface-2 text-ink'
-      }`}
-    >
-      GPS
-    </button>
+    <div className="flex flex-col gap-2 rounded-lg border border-line bg-surface-2 p-3" role="alert">
+      <p className="text-body text-ink">{gpsProblemText(error)}</p>
+      <p className="text-caption text-ink-2">You can still tap the map to place the ball. Simulate works without location.</p>
+      <button
+        type="button"
+        className="flex h-12 items-center justify-center rounded-lg bg-ink px-3 text-body font-medium text-surface"
+        onClick={onRetry}
+      >
+        Try again
+      </button>
+    </div>
   )
 }

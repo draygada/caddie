@@ -4,7 +4,7 @@
  * docked right on wider screens. Reads the store only. The Play it out button lives in
  * PlayItOut (part 13 slices 5 and 6) and mounts in the expanded area.
  */
-import { useState } from 'react'
+import { type ReactNode, useState } from 'react'
 
 import { lieAt, valueNearest } from '../lib/grid'
 import { rampGradientCss } from '../lib/heatmap'
@@ -78,11 +78,13 @@ export interface CaddiePanelProps {
   parts?: { logger: boolean; learn: boolean; playItOut: boolean }
   /** What to say before there is a ball. */
   emptyText?: string
+  /** Shown above the lie row: the GPS notice in Play. */
+  notice?: ReactNode
 }
 
 const ALL_PARTS = { logger: true, learn: true, playItOut: true }
 
-export function CaddiePanel({ parts = ALL_PARTS, emptyText = 'Tap the map to place the ball' }: CaddiePanelProps) {
+export function CaddiePanel({ parts = ALL_PARTS, emptyText = 'Tap the map to place the ball', notice }: CaddiePanelProps) {
   const recommendation = useStore((s) => s.recommendation)
   const ball = useStore((s) => s.ball)
   const bundle = useStore((s) => s.bundle)
@@ -167,6 +169,7 @@ export function CaddiePanel({ parts = ALL_PARTS, emptyText = 'Tap the map to pla
         <span className="sr-only">{expanded ? 'Show less' : 'Show more'}</span>
       </button>
 
+      {notice}
       <LieButtons />
       {body}
       {parts.logger && <ShotLogger />}

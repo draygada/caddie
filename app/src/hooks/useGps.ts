@@ -40,7 +40,7 @@ export interface GpsStatus {
   outside: boolean
 }
 
-/** What `GpsBadge` shows. Separate from the main store, whose shape is fixed in part 11. */
+/** What the GPS status line and notice show. Separate from the main store, whose shape is fixed in part 11. */
 export const useGpsStatus = create<GpsStatus>()(() => ({ enabled: false, error: null, outside: false }))
 
 function insideGrid(meta: Meta, p: XY): boolean {
@@ -100,8 +100,8 @@ export function startGps(geo: GeoLike): () => void {
   }
 }
 
-/** Watch the device position while `enabled`. */
-export function useGps(enabled: boolean): void {
+/** Watch the device position while `enabled`. A new `attempt` restarts the watch ("Try again"). */
+export function useGps(enabled: boolean, attempt = 0): void {
   useEffect(() => {
     if (!enabled) return
     if (typeof navigator === 'undefined' || !navigator.geolocation) {
@@ -109,5 +109,5 @@ export function useGps(enabled: boolean): void {
       return
     }
     return startGps(navigator.geolocation)
-  }, [enabled])
+  }, [enabled, attempt])
 }
