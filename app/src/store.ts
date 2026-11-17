@@ -66,8 +66,8 @@ export interface State {
   resetAim: () => void
   /** Record a shot from the ball with `club` (default: the recommended club); ends the open shot here. */
   hitShot: (club?: string, now?: number) => void
-  /** Close the open shot at the ball as holed-out-of-reach ("On the green") or as a penalty. */
-  finishShot: (outcome: 'green' | 'penalty', now?: number) => void
+  /** Close the open shot at the ball: "Ball is here" (normal), "On the green", or a penalty. */
+  finishShot: (outcome: 'normal' | 'green' | 'penalty', now?: number) => void
   /** Drag correction: move shot `index`'s end (and the next shot's start) to `p`, accuracy 0. */
   moveShotEnd: (key: string, index: number, p: XY) => void
   setShotClub: (club: string, now?: number) => void
@@ -173,16 +173,20 @@ export const useStore = create<State>()(
     const log = s.logs[key] ?? []
     const last = log[log.length - 1]
     const before = last && last.end === null ? [...log.slice(0, -1), closed(last, here, 'normal')] : log
-    const aimDeg = pinBearingDeg(s.bundle, here.at) + rec.dir_deg
+    // Part 22: the shot is logged with the player's club and aim; recAimDeg keeps the caddie's.
+    const aim = currentAim(s)
+    const bearing = pinBearingDeg(s.bundle, here.at)
+    const recAimDeg = bearing + rec.dir_deg
+    const aimDeg = aim ? bearing + aim.dir_deg : recAimDeg
     const shot: LoggedShot = {
       start: here.at,
       end: null,
       startAcc: here.acc,
       endAcc: null,
       lie: here.lie,
-      club: club ?? rec.club,
+      club: club ?? aim?.club ?? rec.club,
       aimDeg,
-      recAimDeg: aimDeg,
+      recAimDeg,
       t: now,
       outcome: 'normal',
     }
