@@ -393,6 +393,21 @@ def _toy():
     return toy_hole(), toy_player()
 
 
+def _assert_json_close(a, b, where="doc"):
+    if isinstance(a, dict):
+        assert isinstance(b, dict) and a.keys() == b.keys(), where
+        for k in a:
+            _assert_json_close(a[k], b[k], f"{where}.{k}")
+    elif isinstance(a, list):
+        assert isinstance(b, list) and len(a) == len(b), where
+        for k, (x, y) in enumerate(zip(a, b, strict=True)):
+            _assert_json_close(x, y, f"{where}[{k}]")
+    elif isinstance(a, float) or isinstance(b, float):
+        assert a == pytest.approx(b, abs=1e-9), where
+    else:
+        assert a == b, where
+
+
 def test_course_log_fixture_is_reproducible(tmp_path):
     from caddie.dispersion import write_course_log_fixture
 
@@ -400,7 +415,8 @@ def test_course_log_fixture_is_reproducible(tmp_path):
     regenerated = tmp_path / "course_log.json"
     write_course_log_fixture(regenerated, hole, player)
     committed = json.loads((FIXTURES / "course_log.json").read_text())
-    assert committed == json.loads(regenerated.read_text())
+    # Not exact equality: sin, cos and arctan differ in the last bit between platforms.
+    _assert_json_close(committed, json.loads(regenerated.read_text()))
 
 
 def test_course_log_fixture_shape(course_fixture):
