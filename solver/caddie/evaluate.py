@@ -246,6 +246,9 @@ def _metrics(strokes: np.ndarray, par: int) -> dict:
 
 
 CLUB_ONLY_AIMS = {"club_pin": "pin", "club_centre": "centre"}
+# A fixed aim can leave a cell beside trees with a small chance of getting out per shot, so
+# the residual falls slowly (about 3% a sweep on hole 11). The sweeps are cheap, 13 actions.
+CLUB_ONLY_MAX_SWEEPS = 400
 
 DECOMPOSITION_STEPS = (
     ("pin", "Pin rule"),
@@ -295,7 +298,8 @@ def evaluate_hole(
     }
     # Part 18: the club-only solves, with the free solve's draws and tolerance.
     for name, aim in CLUB_ONLY_AIMS.items():
-        policies[name] = club_only_policy(solve(hole, player, mode, seed=seed, aim=aim), hole)
+        restricted = solve(hole, player, mode, seed=seed, aim=aim, max_sweeps=CLUB_ONLY_MAX_SWEEPS)
+        policies[name] = club_only_policy(restricted, hole)
     out: dict[str, dict] = {}
     optimal_strokes: np.ndarray | None = None
     for name, policy in policies.items():

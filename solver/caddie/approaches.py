@@ -17,7 +17,14 @@ from pathlib import Path
 import numpy as np
 
 from caddie.dispersion import Player
-from caddie.evaluate import Policy, centre_policy, club_only_policy, optimal_policy, pin_policy
+from caddie.evaluate import (
+    CLUB_ONLY_MAX_SWEEPS,
+    Policy,
+    centre_policy,
+    club_only_policy,
+    optimal_policy,
+    pin_policy,
+)
 from caddie.geometry import Hole
 from caddie.mdp import (
     DIRECTIONS_DEG,
@@ -271,7 +278,8 @@ def build_club_pin(
     K: int = 200,
     seed: int = 0,
 ) -> Policy:
-    return club_only_policy(solve(hole, player, mode, K=K, seed=seed, aim="pin"), hole)
+    sol = solve(hole, player, mode, K=K, seed=seed, aim="pin", max_sweeps=CLUB_ONLY_MAX_SWEEPS)
+    return club_only_policy(sol, hole)
 
 
 def build_club_centre(
@@ -282,7 +290,8 @@ def build_club_centre(
     K: int = 200,
     seed: int = 0,
 ) -> Policy:
-    return club_only_policy(solve(hole, player, mode, K=K, seed=seed, aim="centre"), hole)
+    sol = solve(hole, player, mode, K=K, seed=seed, aim="centre", max_sweeps=CLUB_ONLY_MAX_SWEEPS)
+    return club_only_policy(sol, hole)
 
 
 # --- sparse sampling at depth 2 (Ch 9.4) --------------------------------------------------------
