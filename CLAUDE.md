@@ -23,8 +23,8 @@ Read this file, then the CLAUDE.md of the half you are working in (`solver/CLAUD
 | Coordinates | Hole-local meters. Origin at the Black tee, +y toward the pin, +x to the golfer's right. Lat/lon only in `meta.json` and at the GPS edge. |
 | Grid | 5 m cells, row-major, row 0 at the tee end. |
 | State | `(cell, lie)`, lie in {tee, fairway, rough, bunker, green}. Water and OB are terrain rules, not states. |
-| Action | `(club, direction)`. Directions: relative to the bearing from the ball to the pin, plus or minus 90 degrees in 2 degree steps, 91 values; direction 0 aims at the pin from anywhere. Clubs: 13 incl. partial wedges. |
-| Transition | Land at sampled carry and lateral; look up lie at landing; add roll scaled by lie. |
+| Action | `(club, direction)`. Directions: relative to the bearing from the ball to the pin, plus or minus 90 degrees in 2 degree steps, 91 values; direction 0 aims at the pin from anywhere. Clubs: 13 incl. partial wedges. Driver only from a tee (part 17). |
+| Transition | Land at sampled carry and lateral; look up lie at landing; add roll scaled by lie. A carry or roll path that enters a tree cell stops 2.5 m short of it, no penalty (part 17). |
 | Dispersion | Direction N(0, sigma_theta). Carry = mu_c (1 + sigma_d X), X ~ (1-p) N(0,1) + p N(-2,1). Roll N(mu_r, sigma_r). |
 | Data | 50 shots each SW, 9i, 7i, 5-hybrid; 100 driver; 20 rough 7i. Source: STMax launch monitor export. Canonical CSV columns `club, carry_m, total_m, lateral_m, lie, date`. |
 | Fit | Conjugate Bayesian update (Ch 4.2) for carry, direction, roll from a Broadie-Ko skill-band prior; the posterior sufficient statistics are stored in `player.json`. scipy MLE for p with mishit mean fixed at -2, p in [0.02, 0.25]. Unsampled clubs linear in carry. |
@@ -83,13 +83,13 @@ Read this file, then the CLAUDE.md of the half you are working in (`solver/CLAUD
 }
 ```
 
-`stats` is the conjugate posterior state per sampled club (Normal-Inverse-Gamma for carry and roll with unknown mean and variance; Inverse-Gamma for the direction variance with mean fixed at 0). The point estimates `mu_c`, `sigma_d`, `mu_r`, `sigma_r`, `sigma_theta_deg` are the posterior means derived from `stats` at write time, and the MVP reads only the point estimates. The stretch goal (on-course learning, part 15, not yet written) updates `stats` one shot at a time in the app and recomputes the point estimates; nothing in M1 or M2 depends on `stats` beyond carrying it through. `p` and the lie multipliers are not learned.
+`stats` is the conjugate posterior state per sampled club (Normal-Inverse-Gamma for carry and roll with unknown mean and variance; Inverse-Gamma for the direction variance with mean fixed at 0). The point estimates `mu_c`, `sigma_d`, `mu_r`, `sigma_r`, `sigma_theta_deg` are the posterior means derived from `stats` at write time, and the MVP reads only the point estimates. The stretch goal (on-course learning, part 15) updates `stats` one shot at a time in the app and recomputes the point estimates; nothing in M1 or M2 depends on `stats` beyond carrying it through. `p` and the lie multipliers are not learned.
 
 Binary files next to it, all `rows x cols`, row-major, little-endian:
 
 | File | dtype | Values |
 | --- | --- | --- |
-| `lie.u8` | uint8 | 0 out-of-grid, 1 tee, 2 fairway, 3 rough, 4 bunker, 5 green, 6 water, 7 ob |
+| `lie.u8` | uint8 | 0 out-of-grid, 1 tee, 2 fairway, 3 rough, 4 bunker, 5 green, 6 water, 7 ob, 8 trees (part 17) |
 | `value.f32` | float32 | expected strokes to hole out from the cell centre with the cell's own lie; NaN for out-of-grid |
 | `club.u8` | uint8 | index into `meta.clubs`; 255 for terminal or out-of-grid |
 | `dir.u8` | uint8 | index into `meta.directions_deg`; 255 for terminal or out-of-grid |
@@ -111,6 +111,10 @@ Solver (branch `part/0x-...`): see `solver/CLAUDE.md`.
 | 07 | `docs/parts/07-evaluate.md` | `solver/caddie/evaluate.py` |
 | 08 | `docs/parts/08-export-cli.md` | `solver/caddie/export.py`, `cli.py` |
 | 16 | `docs/parts/16-benchmark.md` | `solver/caddie/benchmark.py`, `approaches.py` |
+| 17 | `docs/parts/17-trees-tee-driver.md` | `geometry.py`, `mdp.py`, plus `shot.ts`, `rollout.ts` for parity |
+| 18 | `docs/parts/18-club-only-baselines.md` | `value_iteration.py` (aim restriction), `evaluate.py` |
+| 19 | `docs/parts/19-real-data.md` | `scripts/stmax_to_shots.py`, committed data and bundles |
+| 20 | `docs/parts/20-robustness-benchmark.md` | `benchmark.py` robustness run |
 
 App (branch `part/1x-...`): see `app/CLAUDE.md`.
 
@@ -122,8 +126,9 @@ App (branch `part/1x-...`): see `app/CLAUDE.md`.
 | 12 | `docs/parts/12-shot-rollout-worker.md` | `app/src/lib/shot.ts`, `rollout.ts`, `rollout.worker.ts` |
 | 13 | `docs/parts/13-caddie-panel-playitout.md` | `CaddiePanel.tsx`, `PlayItOut.tsx` |
 | 14 | `docs/parts/14-pwa-gps-deploy.md` | GPS hook, PWA config, Vercel |
+| 15 | `docs/parts/15-course-learning.md` | `learn.ts`, `shotLog.ts`, `ShotLogger.tsx`; `fit --course-log` |
 
-Build order: 01, 02, 03, 04, 05, 08 (solver can produce a bundle) then 09, 10, 11, 13 (M1 app) then 06, 07, 12, 14 (online step, evaluation, M2). Hole order: 10, 11, 12. Part 16 (approach benchmark) comes after 07 and before 14; part 15 (on-course learning) is reserved and not yet written.
+Build order: 01, 02, 03, 04, 05, 08 (solver can produce a bundle) then 09, 10, 11, 13 (M1 app) then 06, 07, 12, 14 (online step, evaluation, M2). Hole order: 10, 11, 12. Part 16 (approach benchmark) comes after 07 and before 14. Remaining order: 14, 17, 18, 15, 19, 20 (see `docs/roadmap.md`); part 19 needs the launch monitor export and can start its converter slice as soon as the first export exists.
 
 Repo: https://github.com/draygada/caddie (private). Python 3.12, Node 20. Handicap 15. Driver is always hit off a tee on the simulator; every other club off the mat.
 
@@ -135,4 +140,5 @@ Repo: https://github.com/draygada/caddie (private). Python 3.12, Node 20. Handic
 | 7.1 MDP definition, 7.5 value iteration, Eq 7.16 | `mdp.py`, `value_iteration.py` |
 | 8.4 bilinear interpolation, Alg 8.6 | `online.py`, `grid.ts` |
 | 9.2 rollout lookahead, Alg 9.1 | `online.py`, `rollout.ts` |
-| 14.1 performance metrics, 14.3 robustness | `evaluate.py` |
+| 14.1 performance metrics, 14.3 robustness | `evaluate.py`, `benchmark.py` (part 20) |
+| 15 and 16 model-based learning with a Bayesian model | `learn.ts`, `dispersion.py` (part 15) |
