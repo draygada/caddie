@@ -21,6 +21,5 @@ Two questions to answer with the first export: the units of carry, total and off
 
 ## Follow-ups not scheduled
 
-- Loft exemption for trees (a high shot clears a tree near the tee or the green).
 - Cross-entropy aim search and the goal objective (P(score <= par)), from part 16.
 - Wind as a few fixed scenarios.
