@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
 
 import { CaddiePanel, distanceToPinM, toYards } from './components/CaddiePanel'
+import { GpsStatusText } from './components/GpsBadge'
 import { HoleMap } from './components/HoleMap'
 import { loadBundle, loadPlayer } from './lib/loader'
+import { prewarmTiles } from './lib/tiles'
 import { MODE_HELP, MODE_LABEL } from './lib/tokens'
 import type { Mode } from './lib/types'
 import { type HoleId, useStore } from './store'
@@ -119,6 +121,8 @@ export default function App() {
       .then((b) => {
         if (cancelled) return
         useStore.setState({ bundle: b, ball: null, lieOverride: null })
+        // Part 14: cache the hole's satellite tiles while there is still a signal.
+        if (b.meta.hole !== 'toy') void prewarmTiles(b.meta)
         const { tee: current, setTee: pick } = useStore.getState()
         pick(current in b.meta.tees ? current : 'black' in b.meta.tees ? 'black' : Object.keys(b.meta.tees)[0])
       })
@@ -183,7 +187,7 @@ export default function App() {
       </main>
 
       <div className="num flex h-6 items-center gap-3 border-t border-line bg-surface px-4 text-caption text-ink-2" role="status">
-        {error ? <span className="text-bad">{error}</span> : <span>GPS off</span>}
+        {error ? <span className="text-bad">{error}</span> : <GpsStatusText />}
       </div>
     </div>
   )
