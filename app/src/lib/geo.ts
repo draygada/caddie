@@ -74,3 +74,41 @@ export function gridCorners(m: Meta): Corners {
   }
   return [ll({ x: 0, y: h }), ll({ x: w, y: h }), ll({ x: w, y: 0 }), ll({ x: 0, y: 0 })]
 }
+
+/** Room left around the hole in the default view, in meters. */
+export const FRAME_MARGIN_M = 15
+/** The polygon kinds that are the hole itself; rough and hazards spread far wider. */
+const FRAME_KINDS = ['fairway', 'green', 'tee']
+
+/**
+ * The box the map opens on, in grid meters: every tee, the pin, the fairway and the green,
+ * plus a margin, clamped to the grid. Much tighter than the grid, which carries wide rough
+ * and out-of-bounds margins on every side.
+ */
+export function holeFrame(m: Meta): { x0: number; y0: number; x1: number; y1: number } {
+  const pts: [number, number][] = [m.tee_xy, m.pin_xy, ...Object.values(m.tees)]
+  for (const kind of FRAME_KINDS) for (const ring of m.polygons[kind] ?? []) pts.push(...ring)
+  const xs = pts.map((p) => p[0])
+  const ys = pts.map((p) => p[1])
+  const w = m.cols * m.cell_m
+  const h = m.rows * m.cell_m
+  return {
+    x0: Math.max(0, Math.min(...xs) - FRAME_MARGIN_M),
+    y0: Math.max(0, Math.min(...ys) - FRAME_MARGIN_M),
+    x1: Math.min(w, Math.max(...xs) + FRAME_MARGIN_M),
+    y1: Math.min(h, Math.max(...ys) + FRAME_MARGIN_M),
+  }
+}
+
+const EARTH_CIRCUMFERENCE_M = 40075016.686
+const TILE_PX = 512
+
+/**
+ * The MapLibre zoom at which a `widthM` x `heightM` box of ground just fits `availW` x
+ * `availH` screen pixels at latitude `lat`. Computed here because `fitBounds` fits the
+ * north-up bounding box of the corners, which is far looser than a rotated hole.
+ */
+export function frameZoom(widthM: number, heightM: number, availW: number, availH: number, lat: number): number {
+  const mpp = Math.max(widthM / Math.max(availW, 1), heightM / Math.max(availH, 1))
+  return Math.log2((EARTH_CIRCUMFERENCE_M * Math.cos((lat * Math.PI) / 180)) / (TILE_PX * mpp))
+}

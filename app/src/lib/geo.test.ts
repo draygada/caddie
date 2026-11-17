@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import geoPoints from '../../../docs/fixtures/geo_points.json'
-import { gridCorners, gridToLonLat, lonLatToGrid, metresBetween } from './geo'
+import { FRAME_MARGIN_M, frameZoom, gridCorners, gridToLonLat, holeFrame, lonLatToGrid, metresBetween } from './geo'
 import { testMeta } from './testBundle'
 
 /** Meta for the fixture frame: origin at the Black tee, +y toward the pin. */
@@ -93,5 +93,52 @@ describe('gridCorners', () => {
     // pin bearing 327.6 deg: the far corners are north and west of the near ones
     expect(tl[1]).toBeGreaterThan(bl[1])
     expect(tl[0]).toBeLessThan(bl[0])
+  })
+})
+
+describe('holeFrame (the default view)', () => {
+  const meta = testMeta({
+    rows: 80,
+    cols: 40,
+    tee_xy: [100, 50],
+    tees: { black: [100, 50], white: [98, 70] },
+    pin_xy: [105, 360],
+    polygons: { fairway: [[[90, 80], [120, 80], [118, 330], [88, 330], [90, 80]]], green: [], rough: [[[0, 0], [200, 0], [200, 400], [0, 400], [0, 0]]] },
+  })
+
+  it('boxes the tees, the pin, the fairway and the green with a margin, not the whole grid', () => {
+    const f = holeFrame(meta)
+    expect(f).toEqual({ x0: 88 - FRAME_MARGIN_M, y0: 50 - FRAME_MARGIN_M, x1: 120 + FRAME_MARGIN_M, y1: 360 + FRAME_MARGIN_M })
+    expect(f.x1 - f.x0).toBeLessThan(meta.cols * meta.cell_m)
+  })
+
+  it('never reaches outside the grid', () => {
+    const tight = holeFrame({ ...meta, tee_xy: [2, 3], tees: { black: [2, 3] }, pin_xy: [198, 399] })
+    expect(tight.x0).toBe(0)
+    expect(tight.y0).toBe(0)
+    expect(tight.x1).toBe(200)
+    expect(tight.y1).toBe(400)
+  })
+
+  it('works with no polygons at all: tee to pin', () => {
+    const f = holeFrame({ ...meta, polygons: {} })
+    expect(f.x0).toBe(98 - FRAME_MARGIN_M)
+    expect(f.x1).toBe(105 + FRAME_MARGIN_M)
+  })
+})
+
+describe('frameZoom', () => {
+  it('is the zoom at which the box just fits the space, on the tighter side', () => {
+    const lat = 37.4
+    const z = frameZoom(60, 340, 327, 454, lat)
+    const mpp = (40075016.686 * Math.cos((lat * Math.PI) / 180)) / (512 * 2 ** z)
+    expect(340 / mpp).toBeCloseTo(454, 6) // height binds
+    expect(60 / mpp).toBeLessThan(327)
+    const wide = frameZoom(340, 60, 327, 454, lat)
+    expect(wide).toBeLessThan(z) // width binds, so it has to sit further out
+  })
+
+  it('one zoom level in halves the ground covered', () => {
+    expect(frameZoom(100, 100, 400, 400, 0) - frameZoom(200, 200, 400, 400, 0)).toBeCloseTo(1, 9)
   })
 })

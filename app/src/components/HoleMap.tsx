@@ -7,7 +7,6 @@ import {
   type ImageSource,
   type ExpressionSpecification,
   type GeoJSONSource,
-  LngLatBounds,
   Map as MLMap,
   NavigationControl,
   setWorkerUrl,
@@ -25,7 +24,7 @@ import { MapLabels } from './MapLabels'
 import { PlayItOutLayer } from './PlayItOut'
 import { ShotLogLayer } from './ShotLogger'
 
-import { gridCorners, gridToLonLat } from '../lib/geo'
+import { frameZoom, gridCorners, gridToLonLat, holeFrame } from '../lib/geo'
 import { heatmapDataUrl } from '../lib/heatmap'
 import { whenStyleReady } from '../lib/mapReady'
 import { token } from '../lib/tokens'
@@ -38,7 +37,7 @@ export const MAX_ZOOM = 19
 export const HEAT_OPACITY = 0.55
 export const FIT_PADDING_PX = 24
 
-/** Collapsed bottom sheet height on a phone, so the fit keeps the hole above it. */
+/** Fallback for the bottom sheet height on a phone, used until the sheet has rendered. */
 export const SHEET_PADDING_PX = 270
 export const TOP_BAR_PADDING_PX = 88
 
@@ -46,22 +45,38 @@ function isPhone(): boolean {
   return typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches
 }
 
-/** Padding that keeps the fitted grid clear of the floating top bar, the map buttons and the sheet. */
+/** Height of the bottom sheet as it is on screen now, or the fallback before it has rendered. */
+function sheetHeightPx(): number {
+  if (typeof document === 'undefined') return SHEET_PADDING_PX
+  let h = 0
+  for (const el of document.querySelectorAll('section[aria-label="Caddie"]')) h = Math.max(h, el.getBoundingClientRect().height)
+  return h > 0 ? h + FIT_PADDING_PX : SHEET_PADDING_PX
+}
+
+/** Padding that keeps the fitted hole clear of the floating top bar, the map buttons and the sheet. */
 export function fitPadding(): { top: number; bottom: number; left: number; right: number } {
   return {
     top: TOP_BAR_PADDING_PX,
-    bottom: isPhone() ? SHEET_PADDING_PX : FIT_PADDING_PX,
+    bottom: isPhone() ? sheetHeightPx() : FIT_PADDING_PX,
     left: FIT_PADDING_PX,
     right: FIT_PADDING_PX,
   }
 }
 
-/** Bearing = hole bearing, so +y points up the screen, then fit the rotated grid. */
+/**
+ * Bearing = hole bearing, so +y points up the screen, then fit the hole itself (tees, fairway,
+ * green and pin with a margin), not the whole grid with its wide rough margins.
+ */
 export function fitToGrid(map: MLMap, meta: Meta): void {
-  const bounds = new LngLatBounds()
-  for (const [lon, lat] of gridCorners(meta)) bounds.extend([lon, lat])
-  map.setBearing(meta.rotation_deg)
-  map.fitBounds(bounds, { padding: fitPadding(), bearing: meta.rotation_deg, duration: 0 })
+  const f = holeFrame(meta)
+  const padding = fitPadding()
+  const box = map.getContainer()
+  const availW = box.clientWidth - padding.left - padding.right
+  const availH = box.clientHeight - padding.top - padding.bottom
+  const { lon, lat } = gridToLonLat(meta, { x: (f.x0 + f.x1) / 2, y: (f.y0 + f.y1) / 2 })
+  const zoom = Math.min(MAX_ZOOM, frameZoom(f.x1 - f.x0, f.y1 - f.y0, availW, availH, lat))
+  // `padding` puts the centre in the middle of the space the top bar and the sheet leave free.
+  map.jumpTo({ center: [lon, lat], zoom, bearing: meta.rotation_deg, padding })
 }
 
 /** Polygon kinds in draw order; colours come from the --t-* tokens (docs/design.md). */
