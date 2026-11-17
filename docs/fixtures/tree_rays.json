@@ -168,5 +168,50 @@
    "bearing_deg": 131.0,
    "distance_m": 18.0
   }
- ]
+ ],
+ "flight": {
+  "note": "Meters of a carry spent below the canopy at each end: the apex is min(apex_max_m, apex_per_carry x carry), and a shot whose apex is not above tree_height_m is low all the way.",
+  "tree_height_m": 15.0,
+  "apex_max_m": 24.0,
+  "apex_per_carry": 0.3,
+  "descent_step_m": 5.0,
+  "cases": [
+   {
+    "carry_m": 0.0,
+    "low_m": 0.0
+   },
+   {
+    "carry_m": 12.5,
+    "low_m": 12.5
+   },
+   {
+    "carry_m": 40.0,
+    "low_m": 40.0
+   },
+   {
+    "carry_m": 50.0,
+    "low_m": 50.0
+   },
+   {
+    "carry_m": 60.0,
+    "low_m": 17.752551286084113
+   },
+   {
+    "carry_m": 80.0,
+    "low_m": 15.505102572168221
+   },
+   {
+    "carry_m": 100.0,
+    "low_m": 19.381378215210276
+   },
+   {
+    "carry_m": 150.0,
+    "low_m": 29.072067322815414
+   },
+   {
+    "carry_m": 215.0,
+    "low_m": 41.669963162702096
+   }
+  ]
+ }
 }

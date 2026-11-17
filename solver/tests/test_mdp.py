@@ -495,3 +495,193 @@ def test_tree_rays_fixture_matches_python():
             hits += 1
             assert d == pytest.approx(case["distance_m"], abs=1e-9)
     assert 3 <= hits <= 8  # the fixture mixes hits and misses
+
+
+# part 17 slice 5: blocking in step_batch -------------------------------------------
+
+
+def _tree_setup(player=None):
+    from tests.fixtures.toy_hole import toy_tree_hole
+
+    hole = toy_tree_hole()
+    player = player or toy_player()
+    return hole, player, build_offset_tables(player, make_draws(200))
+
+
+def test_shot_through_the_tree_row_rests_short_of_it(tables):
+    hole, player, _ = _tree_setup()
+    tee = np.array([5])  # (0, 5): x 27.5, y 2.5, straight below the row
+    nxt, rew = step_batch(hole, player, tee, hole.lie.reshape(-1)[tee], 0, DIR0, tables, "drop")
+    rows, cols = np.divmod(nxt[0], hole.cols)
+    assert np.all(rew == -1.0)  # blocked, never penalised
+    assert np.all(rows <= 3)  # nothing got past y = 20
+    assert np.mean(rows == 3) > 0.9  # 2.5 m short of the row is y 17.5
+    assert not np.any(hole.lie.reshape(-1)[nxt] == Lie.TREES)
+    clear = toy_hole(hazards=False)
+    nxt0, _ = step_batch(clear, player, tee, clear.lie.reshape(-1)[tee], 0, DIR0, tables, "drop")
+    assert np.mean(nxt0[0] // clear.cols >= 4) > 0.95  # the same shot without trees flies on
+
+
+def test_shots_that_miss_the_trees_are_unchanged(tables):
+    hole, player, _ = _tree_setup()
+    clear = toy_hole(hazards=False)
+    above = np.array([6 * hole.cols + 5, 6 * hole.cols + 2])  # past the row, heading to the pin
+    for from_idx, d in ((above, DIR0), (np.array([5]), 0), (np.array([5]), 90)):
+        lie = clear.lie.reshape(-1)[from_idx]
+        a = step_batch(hole, player, from_idx, lie, 0, d, tables, "drop")
+        b = step_batch(clear, player, from_idx, lie, 0, d, tables, "drop")
+        assert np.array_equal(a[0], b[0]) and np.array_equal(a[1], b[1])
+
+
+def test_roll_into_the_trees_stops_before_them():
+    runner = club(mu_c=14.0, sigma_theta=0.5, sigma_d=0.01, p=0.0, mu_r=6.0, sigma_r=0.2)
+    base = toy_player()
+    player = type(base)(
+        handicap=15,
+        clubs={TOY_CLUB: runner},
+        club_order=[TOY_CLUB],
+        lie=base.lie,
+        putting=base.putting,
+    )
+    hole, player, tables = _tree_setup(player)
+    tee = np.array([5])
+    nxt, rew = step_batch(hole, player, tee, hole.lie.reshape(-1)[tee], 0, DIR0, tables, "drop")
+    rows = nxt[0] // hole.cols
+    assert np.all(rows == 3)  # lands at y 16.5, would roll to 22.5, stops at 18
+    assert np.all(rew == -1.0)
+    clear = toy_hole(hazards=False)
+    nxt0, _ = step_batch(clear, player, tee, clear.lie.reshape(-1)[tee], 0, DIR0, tables, "drop")
+    assert np.all(nxt0[0] // clear.cols == 4)
+
+
+def test_tree_ray_table_matches_the_exact_march():
+    from caddie.mdp import RAY_BIN_DEG, first_tree_distance, tree_ray_table
+    from tests.fixtures.toy_hole import toy_tree_hole
+
+    hole = toy_tree_hole()
+    table = tree_ray_table(hole)
+    assert table.shape == (hole.rows * hole.cols, int(360 / RAY_BIN_DEG))
+    for cell, bearing in ((5, 0.0), (5, 30.0), (5, 45.0), (12, 17.5), (65, 180.0), (5, -20.0)):
+        r, c = divmod(cell, hole.cols)
+        exact = first_tree_distance(hole, (c + 0.5) * 5.0, (r + 0.5) * 5.0, bearing)
+        assert table[cell, int(round((bearing % 360) / RAY_BIN_DEG))] == exact
+    clear = toy_hole(hazards=False)
+    assert np.isinf(tree_ray_table(clear)).all()
+
+
+def test_solve_on_the_tree_hole_goes_around_the_row():
+    from caddie.value_iteration import NO_ACTION, solve
+    from tests.fixtures.toy_hole import toy_tree_hole
+
+    hole = toy_tree_hole()
+    sol = solve(hole, toy_player(), "drop", K=100)
+    trees = hole.lie.reshape(-1) == Lie.TREES
+    assert np.isnan(sol.U[trees]).all()
+    assert np.all(sol.club[trees] == NO_ACTION) and np.all(sol.dir[trees] == NO_ACTION)
+    tee = 5
+    assert np.isfinite(sol.U[tee])
+    assert sol.dir[tee] != DIR0  # straight at the pin is blocked, so the policy aims around
+    clear = solve(toy_hole(hazards=False), toy_player(), "drop", K=100)
+    assert sol.U[tee] > clear.U[tee]  # the trees cost strokes
+
+
+# part 17 slice 7: tee-only driver ---------------------------------------------------
+
+
+def _two_club_player():
+    base = toy_player()
+    return type(base)(
+        handicap=15,
+        clubs={"driver": club(mu_c=30.0), TOY_CLUB: base.clubs[TOY_CLUB]},
+        club_order=["driver", TOY_CLUB],
+        lie=base.lie,
+        putting=base.putting,
+    )
+
+
+def test_candidate_actions_drop_the_driver_off_the_tee_lie():
+    from caddie.mdp import TEE_ONLY_CLUBS
+
+    assert TEE_ONLY_CLUBS == ("driver",)
+    h = toy_hole()
+    h.lie[0, 5] = int(Lie.TEE)
+    player = _two_club_player()
+    far = (27.5, 2.5)  # the tee cell, 45 m out: both clubs pass the 1.3 x distance rule
+    assert set(candidate_actions(h, player, far)[:, 0]) == {0, 1}  # lie read from the cell
+    assert set(candidate_actions(h, player, far, lie=Lie.TEE)[:, 0]) == {0, 1}
+    for lie in (Lie.FAIRWAY, Lie.ROUGH, Lie.BUNKER):
+        assert set(candidate_actions(h, player, far, lie=lie)[:, 0]) == {1}
+    assert set(candidate_actions(h, player, (22.5, 2.5))[:, 0]) == {1}  # a fairway cell
+
+
+def test_candidate_actions_single_club_bags_are_unaffected():
+    h = toy_hole()
+    a = candidate_actions(h, toy_player(), (27.5, 2.5))
+    b = candidate_actions(h, toy_player(), (27.5, 2.5), lie=Lie.ROUGH)
+    assert np.array_equal(a, b)
+    base = toy_player()
+    only = type(base)(15, {"driver": base.clubs[TOY_CLUB]}, ["driver"], base.lie, base.putting)
+    assert candidate_actions(h, only, (27.5, 2.5), lie=Lie.FAIRWAY).shape == (91, 2)  # never empty
+
+
+# part 17 slice 5 (amended): the ball clears trees above the canopy -----------------
+
+
+def test_low_flight_m_against_hand_values():
+    from caddie.mdp import APEX_MAX_M, APEX_PER_CARRY, TREE_HEIGHT_M, low_flight_m
+
+    assert (TREE_HEIGHT_M, APEX_MAX_M, APEX_PER_CARRY) == (15.0, 24.0, 0.30)
+    low = low_flight_m(np.array([100.0, 215.0, 40.0, 50.0, 60.0, 0.0]))
+    assert low[0] == pytest.approx(100.0 * (1 - np.sqrt(1 - 15 / 24)) / 2)  # 19.38
+    assert low[0] == pytest.approx(19.38, abs=0.01)
+    assert low[1] == pytest.approx(215.0 * 0.19381, abs=0.01)  # apex capped at 24 m
+    assert low[2] == 40.0  # apex 12 m: under the trees all the way
+    assert low[3] == 50.0  # apex exactly 15 m still does not clear
+    assert 0 < low[4] < 30.0  # apex 18 m: clears in the middle
+    assert low[5] == 0.0
+
+
+def _long_player(mu_c=100.0):
+    base = toy_player()
+    long_club = club(mu_c=mu_c, sigma_theta=0.5, sigma_d=0.01, p=0.0, mu_r=0.0, sigma_r=0.0)
+    player = type(base)(15, {TOY_CLUB: long_club}, [TOY_CLUB], base.lie, base.putting)
+    return player, build_offset_tables(player, make_draws(200))
+
+
+@pytest.mark.parametrize(
+    ("tree_row", "expected"),
+    [
+        (12, "clears"),  # y 60 to 65: mid-flight, above the canopy
+        (3, "climb"),  # y 15 to 20: inside the first 19.4 m
+        (20, "descent"),  # y 100 to 105: the ball comes down into it
+    ],
+)
+def test_a_full_shot_clears_trees_in_the_middle_of_its_carry(tree_row, expected):
+    from tests.fixtures.toy_hole import tall_tree_hole
+
+    hole = tall_tree_hole(tree_row)
+    player, tables = _long_player()
+    tee = np.array([5])
+    nxt, rew = step_batch(hole, player, tee, hole.lie.reshape(-1)[tee], 0, DIR0, tables, "drop")
+    rows = nxt[0] // hole.cols
+    assert np.all(rew == -1.0)
+    assert not np.any(hole.lie.reshape(-1)[nxt] == Lie.TREES)
+    if expected == "clears":
+        assert np.all(rows >= 19)  # lands near y 102.5, past the row
+    elif expected == "climb":
+        assert np.all(rows == 2)  # 2.5 m short of y 15
+    else:
+        assert np.all(rows == 19)  # stopped just short of y 100
+
+
+def test_flight_fixture_matches_python():
+    from caddie.mdp import APEX_MAX_M, APEX_PER_CARRY, DESCENT_STEP_M, TREE_HEIGHT_M, low_flight_m
+
+    flight = json.loads(TREE_RAYS.read_text())["flight"]
+    assert flight["tree_height_m"] == TREE_HEIGHT_M and flight["apex_max_m"] == APEX_MAX_M
+    assert flight["apex_per_carry"] == APEX_PER_CARRY and flight["descent_step_m"] == DESCENT_STEP_M
+    assert len(flight["cases"]) == 9
+    for case in flight["cases"]:
+        assert float(low_flight_m(np.array([case["carry_m"]]))[0]) == pytest.approx(
+            case["low_m"], abs=1e-12
+        )

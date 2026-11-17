@@ -98,6 +98,38 @@ def toy_tree_hole() -> Hole:
     return hole
 
 
+def tall_tree_hole(tree_row: int) -> Hole:
+    """A 30 x 10 fairway strip (150 m long) with one full-width tree row (part 17).
+
+    Tee at (27.5, 2.5), pin at (27.5, 142.5), green within 7.5 m of the pin. Long
+    enough for a 100 m club, whose flight clears trees in the middle of its carry.
+    """
+    rows, cols = 30, COLS
+    lie = np.full((rows, cols), int(Lie.FAIRWAY), dtype=np.uint8)
+    cx = (np.arange(cols) + 0.5) * CELL_M
+    cy = (np.arange(rows) + 0.5) * CELL_M
+    pin_xy = (float(cx[5]), float(cy[rows - 2]))
+    xx, yy = np.meshgrid(cx, cy)
+    lie[np.hypot(xx - pin_xy[0], yy - pin_xy[1]) <= GREEN_RADIUS_M] = int(Lie.GREEN)
+    lie[tree_row, :] = int(Lie.TREES)
+    tee_xy = (float(cx[5]), float(cy[0]))
+    return Hole(
+        number=0,
+        par=4,
+        cell_m=CELL_M,
+        rows=rows,
+        cols=cols,
+        origin_lat=0.0,
+        origin_lon=0.0,
+        rotation_deg=0.0,
+        tee_xy=tee_xy,
+        tees={"black": tee_xy},
+        pin_xy=pin_xy,
+        lie=lie,
+        drop_index=compute_drop_index(lie, tee_xy, CELL_M),
+    )
+
+
 MAX_SHOTS = 30
 
 

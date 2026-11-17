@@ -500,3 +500,64 @@ def test_hole_11_has_tree_cells_and_keeps_its_fairway_shape(tmp_path):
     assert n_trees > 50
     assert int(np.sum(hole.lie == LIE_CODE["green"])) > 0
     assert hole.lie[hole.lie == LIE_CODE["trees"]].size < 0.5 * np.sum(hole.lie > 0)
+
+
+# part 17 slice 5: no playable cell may be walled in by trees -----------------------
+
+
+def test_seal_tree_pockets_turns_walled_in_cells_into_trees():
+    from caddie.geometry import LIE_CODE, seal_tree_pockets
+
+    f, t, g = LIE_CODE["fairway"], LIE_CODE["trees"], LIE_CODE["green"]
+    lie = np.full((7, 7), f, dtype=np.uint8)
+    lie[6, 3] = g
+    lie[1:4, 1:4] = t
+    lie[2, 2] = LIE_CODE["rough"]  # walled in on all four sides
+    sealed = seal_tree_pockets(lie)
+    assert sealed[2, 2] == t
+    untouched = np.ones_like(lie, dtype=bool)
+    untouched[2, 2] = False
+    assert np.array_equal(sealed[untouched], lie[untouched])
+    assert np.array_equal(lie[2, 2], LIE_CODE["rough"])  # the input is not modified
+
+
+def test_seal_tree_pockets_leaves_open_holes_alone():
+    from caddie.geometry import LIE_CODE, seal_tree_pockets
+
+    lie = np.full((5, 5), LIE_CODE["rough"], dtype=np.uint8)
+    lie[4, 2] = LIE_CODE["green"]
+    lie[2, 1:4] = LIE_CODE["trees"]  # a row with open ends
+    assert np.array_equal(seal_tree_pockets(lie), lie)
+    assert np.array_equal(
+        seal_tree_pockets(np.full((3, 3), LIE_CODE["fairway"], dtype=np.uint8)),
+        np.full((3, 3), LIE_CODE["fairway"], dtype=np.uint8),
+    )
+
+
+@pytest.mark.parametrize("number", [10, 11, 12])
+def test_built_holes_have_no_playable_cell_cut_off_from_the_green(number, tmp_path):
+    from scipy.ndimage import label
+
+    from caddie.geometry import LIE_CODE
+
+    hole = _hole(number, tmp_path)
+    regions, _ = label(hole.lie != LIE_CODE["trees"])
+    green = np.unique(regions[hole.lie == LIE_CODE["green"]])
+    playable = np.isin(hole.lie, [LIE_CODE[k] for k in ("tee", "fairway", "rough", "bunker")])
+    assert not np.any(playable & ~np.isin(regions, green))
+
+
+def test_seal_tree_pockets_fills_nearly_boxed_in_cells():
+    from caddie.geometry import LIE_CODE, seal_tree_pockets
+
+    f, t, g = LIE_CODE["fairway"], LIE_CODE["trees"], LIE_CODE["green"]
+    lie = np.full((7, 7), f, dtype=np.uint8)
+    lie[6, 3] = g
+    lie[1:4, 1:4] = t
+    lie[2, 2] = f  # the pocket
+    lie[1, 2] = f  # a one-cell mouth, so the pocket is connected to the green
+    sealed = seal_tree_pockets(lie)
+    assert sealed[2, 2] == t  # 7 of 8 neighbours are trees
+    assert sealed[1, 2] == f  # the mouth is a notch in the edge (5 tree neighbours): left alone
+    assert sealed[0, 2] == f
+    assert int((sealed == t).sum()) == 8

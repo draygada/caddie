@@ -16,9 +16,11 @@ import logging
 import math
 from dataclasses import dataclass
 from enum import IntEnum
+from functools import cached_property
 from typing import Literal, Protocol
 
 import numpy as np
+from scipy.ndimage import distance_transform_edt
 from scipy.spatial import cKDTree
 from scipy.stats import norm, qmc
 
@@ -124,6 +126,21 @@ class OffsetTables:
     dy: np.ndarray
     roll: np.ndarray
 
+    @cached_property
+    def carry_len(self) -> np.ndarray:
+        """Carry length of every draw, same shape as ``dx`` (part 17 tree rule)."""
+        return np.hypot(self.dx, self.dy)
+
+    @cached_property
+    def low_len(self) -> np.ndarray:
+        """``low_flight_m`` of every draw's carry, same shape as ``dx``."""
+        return low_flight_m(self.carry_len)
+
+    @cached_property
+    def carry_angle_deg(self) -> np.ndarray:
+        """Angle of every draw's carry vector from the table's +y axis, degrees."""
+        return np.degrees(np.arctan2(self.dx, self.dy))
+
 
 def build_offset_tables(player: Player, draws: Draws) -> OffsetTables:
     """Precompute landing offsets for every club in ``player.club_order``."""
@@ -218,9 +235,27 @@ def locate(hole: Hole, x: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.nda
 # --- part 17: trees block the ball ---------------------------------------------------
 
 TREE_STEP_BACK_M = 2.5  # a blocked ball rests this far before the first tree point
+# Flight height (part 17, amended): three estimates of ours, not measurements.
+TREE_HEIGHT_M = 15.0
+APEX_MAX_M = 24.0
+APEX_PER_CARRY = 0.30
+DESCENT_STEP_M = 5.0
 RAY_STEP_M = 1.0
 RAY_MAX_M = 320.0
 RAY_BIN_DEG = 0.5
+
+
+def low_flight_m(carry: np.ndarray) -> np.ndarray:
+    """Meters of a carry spent below the canopy at each end.
+
+    The carry is a parabola with apex ``min(APEX_MAX_M, APEX_PER_CARRY * carry)``. A
+    shot whose apex does not clear ``TREE_HEIGHT_M`` is low for its whole carry.
+    """
+    carry = np.asarray(carry, dtype=float)
+    apex = np.minimum(APEX_MAX_M, APEX_PER_CARRY * carry)
+    clears = apex > TREE_HEIGHT_M
+    ratio = np.where(clears, TREE_HEIGHT_M / np.where(clears, apex, 1.0), 1.0)
+    return np.where(clears, carry * (1.0 - np.sqrt(1.0 - ratio)) / 2.0, np.maximum(carry, 0.0))
 
 
 def _is_tree(hole: Hole, x: np.ndarray, y: np.ndarray) -> np.ndarray:
@@ -228,9 +263,8 @@ def _is_tree(hole: Hole, x: np.ndarray, y: np.ndarray) -> np.ndarray:
     r = np.floor(y / hole.cell_m).astype(np.int64)
     c = np.floor(x / hole.cell_m).astype(np.int64)
     inside = (r >= 0) & (r < hole.rows) & (c >= 0) & (c < hole.cols)
-    out = np.zeros(np.shape(x), dtype=bool)
-    out[inside] = hole.lie[r[inside], c[inside]] == Lie.TREES
-    return out
+    idx = np.clip(r, 0, hole.rows - 1) * hole.cols + np.clip(c, 0, hole.cols - 1)
+    return inside & (hole.lie.reshape(-1)[idx] == Lie.TREES)
 
 
 def tree_march(
@@ -266,6 +300,172 @@ def first_tree_distance(
     return float(tree_march(hole, np.array([x]), np.array([y]), np.array([bearing_deg]), max_m)[0])
 
 
+@dataclass
+class TreeData:
+    """Per-hole lookups for the tree rule, built once and cached."""
+
+    lie: np.ndarray  # the lie grid these were built from
+    ray: np.ndarray  # (rows*cols, 720) float32, see tree_ray_table
+    is_tree: np.ndarray  # (rows*cols,) bool
+    descent: np.ndarray  # (rows*cols, 720) uint8, see descent_table
+    dist_m: np.ndarray  # (rows*cols,) distance from each cell centre to the nearest tree centre
+
+
+_TREE_CACHE: dict[int, tuple[Hole, TreeData | None]] = {}
+
+
+def tree_data(hole: Hole) -> TreeData | None:
+    """Tree lookups for ``hole``, or None when it has no tree cells.
+
+    Cached per hole and rebuilt if the hole's lie grid has changed.
+    """
+    hit = _TREE_CACHE.get(id(hole))
+    if hit is not None and hit[0] is hole:
+        if hit[1] is None:
+            if not np.any(hole.lie == Lie.TREES):
+                return None
+        elif np.array_equal(hit[1].lie, hole.lie):
+            return hit[1]
+    flat = hole.lie.reshape(-1)
+    is_tree = flat == Lie.TREES
+    if not np.any(is_tree):
+        _TREE_CACHE[id(hole)] = (hole, None)
+        return None
+    n_bins = int(round(360.0 / RAY_BIN_DEG))
+    ray = np.full((flat.size, n_bins), np.inf, dtype=np.float32)
+    cells = np.flatnonzero(np.isin(flat, [int(v) for v in PLAYABLE_LIES]))
+    x, y = cell_xy(hole, cells)
+    bearings = np.arange(n_bins) * RAY_BIN_DEG
+    ray[cells] = tree_march(hole, x[:, None], y[:, None], bearings[None, :])
+    dist = distance_transform_edt(hole.lie != Lie.TREES) * hole.cell_m
+    data = TreeData(
+        lie=hole.lie.copy(),
+        ray=ray,
+        is_tree=is_tree,
+        descent=descent_table(hole, n_bins),
+        dist_m=dist.reshape(-1),
+    )
+    _TREE_CACHE[id(hole)] = (hole, data)
+    log.info("built tree ray table %s for hole %s", ray.shape, hole.number)
+    return data
+
+
+def descent_table(hole: Hole, n_bins: int) -> np.ndarray:
+    """(rows*cols, n_bins) uint8 bit mask of tree points on the way down into each cell.
+
+    For a ball arriving at a cell along absolute bearing ``k * RAY_BIN_DEG``, bit ``j``
+    is set when the point ``j * DESCENT_STEP_M`` short of the cell centre on that line
+    is in a tree cell (bit 0 is the cell itself). The landing point is taken at its
+    cell centre, which is the solver's own resolution.
+    """
+    all_cells = np.arange(hole.rows * hole.cols)
+    x, y = cell_xy(hole, all_cells)
+    rad = np.radians(np.arange(n_bins) * RAY_BIN_DEG)
+    sx, sy = np.sin(rad)[None, :], np.cos(rad)[None, :]
+    mask = np.zeros((all_cells.size, n_bins), dtype=np.uint8)
+    for j in range(3):
+        back = j * DESCENT_STEP_M
+        mask |= _is_tree(hole, x[:, None] - back * sx, y[:, None] - back * sy).astype(np.uint8) << j
+    return mask
+
+
+def tree_ray_table(hole: Hole) -> np.ndarray:
+    """(rows*cols, 720) float32: :func:`tree_march` from every playable cell centre.
+
+    Column ``k`` is the absolute bearing ``k * RAY_BIN_DEG``. Rows of cells no shot is
+    played from are ``inf``; a hole without tree cells gets an all-``inf`` table.
+    """
+    data = tree_data(hole)
+    if data is None:
+        n_bins = int(round(360.0 / RAY_BIN_DEG))
+        return np.full((hole.rows * hole.cols, n_bins), np.inf, dtype=np.float32)
+    return data.ray
+
+
+def _walk_back(
+    hole: Hole, sx: np.ndarray, sy: np.ndarray, ux: np.ndarray, uy: np.ndarray, d: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """Points ``d`` along (ux, uy) from (sx, sy), pulled back until none is in a tree cell."""
+    px, py = sx + ux * d, sy + uy * d
+    todo = np.flatnonzero(_is_tree(hole, px, py))
+    d = d.copy()
+    while todo.size:  # only the stragglers; ends at d = 0, the segment start, which is not trees
+        d[todo] = np.maximum(d[todo] - TREE_STEP_BACK_M, 0.0)
+        px[todo], py[todo] = sx[todo] + ux[todo] * d[todo], sy[todo] + uy[todo] * d[todo]
+        todo = todo[_is_tree(hole, px[todo], py[todo]) & (d[todo] > 0)]
+    return px, py
+
+
+def _block_at_trees(
+    hole: Hole,
+    trees: TreeData,
+    x0: np.ndarray,
+    y0: np.ndarray,
+    from_idx: np.ndarray,
+    carry: np.ndarray,
+    low: np.ndarray,
+    carry_bearing_deg: np.ndarray,
+    roll_bearing_deg: np.ndarray,
+    lx: np.ndarray,
+    ly: np.ndarray,
+    land_idx: np.ndarray,
+    land_lie: np.ndarray,
+    run: np.ndarray,
+    fx: np.ndarray,
+    fy: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Final resting points after the tree rule. (N, K) arrays; starts and roll bearing (N,).
+
+    Climb: the ray-table distance for the shot's bearing bin is within the low part of
+    the carry (``low``). Descent: the landing cell, or the points one and two
+    ``DESCENT_STEP_M`` short of its centre when they are past the low part, is in a
+    tree cell (:func:`descent_table`). Roll: an exact march from the landing
+    point, again only near trees. A stopped ball rests ``TREE_STEP_BACK_M`` before the
+    tree point that stopped it, walked back while that spot is itself in a tree cell.
+    """
+    bins = np.rint(carry_bearing_deg / RAY_BIN_DEG).astype(np.int64) % trees.ray.shape[1]
+    ray = trees.ray[from_idx[:, None], bins]
+    stop = np.where(ray <= low, ray, np.inf)  # distance along the carry line; inf = not stopped
+
+    # Descent: the last 2 x DESCENT_STEP_M of the carry, from the per-cell lookup.
+    bits = trees.descent[land_idx, bins]
+    if bits.any():
+        down = np.where(bits & 1, carry, np.inf)
+        for j in (1, 2):  # points further back are earlier on the line, so they win
+            s = carry - j * DESCENT_STEP_M
+            down = np.where(((bits >> j) & 1 == 1) & (s > low) & (s > 0), s, down)
+        stop = np.minimum(stop, down)
+
+    # Whole-array arithmetic from here: indexing out the stopped draws costs more than it saves.
+    stopped = np.isfinite(stop)
+    if stopped.any():
+        safe = np.where(carry > 0, carry, 1.0)
+        frac = np.where(stopped, np.maximum(stop - TREE_STEP_BACK_M, 0.0) / safe, 1.0)
+        px = x0[:, None] + (lx - x0[:, None]) * frac
+        py = y0[:, None] + (ly - y0[:, None]) * frac
+        fx, fy = np.where(stopped, px, fx), np.where(stopped, py, fy)
+        n, k = np.nonzero(stopped & _is_tree(hole, fx, fy))  # the few still inside a tree cell
+        if n.size:
+            b = np.radians(carry_bearing_deg[n, k])
+            rest = np.maximum(stop[n, k] - 2 * TREE_STEP_BACK_M, 0.0)
+            fx[n, k], fy[n, k] = _walk_back(hole, x0[n], y0[n], np.sin(b), np.cos(b), rest)
+    else:
+        fx, fy = fx.copy(), fy.copy()
+
+    near_tree = trees.dist_m[land_idx]
+    n, k = np.nonzero(~stopped & (run != 0) & (near_tree <= np.abs(run) + 1.5 * hole.cell_m))
+    if n.size:
+        r = run[n, k]
+        b = roll_bearing_deg[n] + np.where(r < 0, 180.0, 0.0)  # a negative roll runs backwards
+        r = np.abs(r)
+        sx, sy = lx[n, k], ly[n, k]
+        hit = tree_march(hole, sx, sy, b, max_m=float(r.max()) + RAY_STEP_M)
+        stop = np.where(hit <= r, np.maximum(hit - TREE_STEP_BACK_M, 0.0), r)
+        rad = np.radians(b)
+        fx[n, k], fy[n, k] = _walk_back(hole, sx, sy, np.sin(rad), np.cos(rad), stop)
+    return fx, fy
+
+
 def pin_bearing_deg(hole: Hole, x: np.ndarray, y: np.ndarray) -> np.ndarray:
     """Bearing from (x, y) to the pin, degrees clockwise from +y, in (-180, 180]."""
     return np.degrees(np.arctan2(hole.pin_xy[0] - x, hole.pin_xy[1] - y))
@@ -286,8 +486,9 @@ def step_batch(
     Directions are relative to each cell's bearing to the pin: the table
     offsets (sampled for an aim of ``dir_deg`` from +y) are rotated by the
     cell's pin bearing. Land at the sampled offset, roll along the aim unit
-    vector by an amount scaled by the landing lie, then apply the terrain
-    rule for ``mode`` on the final cell.
+    vector by an amount scaled by the landing lie, stop the ball short of any
+    tree cell on the way (part 17), then apply the terrain rule for ``mode``
+    on the final cell.
     """
     if mode not in PENALTY_MODES:
         raise ValueError(f"unknown penalty_mode {mode!r}")
@@ -305,10 +506,31 @@ def step_batch(
     rdx = dx * cb + dy * sb
     rdy = -dx * sb + dy * cb
     lx, ly = x0[:, None] + rdx, y0[:, None] + rdy
-    _, land_lie, _ = locate(hole, lx, ly)
-    ux, uy = aim_unit(np.degrees(bearing) + DIRECTIONS_DEG[dir_idx])
+    land_idx, land_lie, _ = locate(hole, lx, ly)
+    aim_deg = np.degrees(bearing) + DIRECTIONS_DEG[dir_idx]  # (N, 1)
+    ux, uy = aim_unit(aim_deg)
     run = apply_roll(land_lie, roll, player)
     fx, fy = lx + ux * run, ly + uy * run
+    trees = tree_data(hole)
+    if trees is not None:  # part 17: a ball cannot pass through trees
+        fx, fy = _block_at_trees(
+            hole,
+            trees,
+            x0,
+            y0,
+            from_idx,
+            tables.carry_len[club_idx, from_li, dir_idx],
+            tables.low_len[club_idx, from_li, dir_idx],
+            np.degrees(bearing) + tables.carry_angle_deg[club_idx, from_li, dir_idx],
+            aim_deg[:, 0],
+            lx,
+            ly,
+            land_idx,
+            land_lie,
+            run,
+            fx,
+            fy,
+        )
     final_idx, final_lie, outside = locate(hole, fx, fy)
 
     water = final_lie == Lie.WATER
@@ -342,16 +564,37 @@ def terminal_values(hole: Hole, putting: PuttingTable | PuttingCurve) -> np.ndar
 CANDIDATE_CARRY_FACTOR = 1.3
 
 
-def candidate_actions(hole: Hole, player: Player, from_xy: tuple[float, float]) -> np.ndarray:
+# Part 17: clubs that are only hit off a tee.
+TEE_ONLY_CLUBS: tuple[str, ...] = ("driver",)
+
+
+def allowed_clubs(player: Player, lie: Lie | int) -> np.ndarray:
+    """Bool per club in ``player.club_order``: False for a tee-only club off the tee.
+
+    A bag made only of tee-only clubs is allowed everywhere, so no lie is left without a club.
+    """
+    tee_only = np.array([name in TEE_ONLY_CLUBS for name in player.club_order])
+    if int(lie) == Lie.TEE or tee_only.all():
+        return np.ones(tee_only.shape, dtype=bool)
+    return ~tee_only
+
+
+def candidate_actions(
+    hole: Hole, player: Player, from_xy: tuple[float, float], lie: Lie | int | None = None
+) -> np.ndarray:
     """(n, 2) array of (club_idx, dir_idx) worth evaluating from ``from_xy``.
 
-    Keeps clubs with ``mu_c <= 1.3 * distance to pin`` and every direction;
-    the shortest club is always kept so the set is never empty.
+    Keeps clubs with ``mu_c <= 1.3 * distance to pin`` and every direction, minus the
+    tee-only clubs unless the lie is the tee (``lie`` defaults to the lie of the cell
+    under ``from_xy``). The shortest allowed club is always kept so the set is never empty.
     """
     dist = float(np.hypot(from_xy[0] - hole.pin_xy[0], from_xy[1] - hole.pin_xy[1]))
     mu = np.array([player.clubs[name].mu_c for name in player.club_order])
-    keep = np.flatnonzero(mu <= CANDIDATE_CARRY_FACTOR * dist)
+    if lie is None:
+        lie = int(locate(hole, np.array([from_xy[0]]), np.array([from_xy[1]]))[1][0])
+    ok = allowed_clubs(player, lie)
+    keep = np.flatnonzero(ok & (mu <= CANDIDATE_CARRY_FACTOR * dist))
     if keep.size == 0:
-        keep = np.array([int(np.argmin(mu))])
+        keep = np.array([int(np.flatnonzero(ok)[np.argmin(mu[ok])])])
     clubs, dirs = np.meshgrid(keep, np.arange(len(DIRECTIONS_DEG)), indexing="ij")
     return np.column_stack((clubs.ravel(), dirs.ravel()))

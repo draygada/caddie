@@ -17,6 +17,7 @@ from pathlib import Path
 
 import numpy as np
 from pyproj import Transformer
+from scipy.ndimage import label
 from shapely import contains_xy, union_all
 from shapely.geometry import LineString, Point, Polygon, shape
 from shapely.geometry.base import BaseGeometry
@@ -217,6 +218,41 @@ def tree_shapes_xy(
             moved = moved.buffer(0)
         shapes.extend(_polygons_of(moved))
     return shapes
+
+
+BOXED_IN_NEIGHBOURS = 6  # of 8
+
+
+def seal_tree_pockets(lie: np.ndarray) -> np.ndarray:
+    """Turn tee, fairway, rough and bunker cells that trees box in into tree cells.
+
+    Two tests (part 17). A playable cell with no path of non-tree cells to the green
+    (4-connected) can never be left, because a ball cannot pass through a tree cell on
+    the ground. A playable cell with trees in ``BOXED_IN_NEIGHBOURS`` or more of its 8
+    neighbours can be left only rarely; this test repeats until nothing changes. Either
+    kind would make value iteration diverge or crawl. Returns a new grid.
+    """
+    trees = LIE_CODE["trees"]
+    playable_codes = [LIE_CODE[k] for k in ("tee", "fairway", "rough", "bunker")]
+    out = lie.copy()
+    while True:
+        is_tree = np.pad(out == trees, 1)
+        rows, cols = out.shape
+        around = sum(
+            is_tree[1 + dr : 1 + dr + rows, 1 + dc : 1 + dc + cols].astype(np.int32)
+            for dr in (-1, 0, 1)
+            for dc in (-1, 0, 1)
+            if (dr, dc) != (0, 0)
+        )
+        boxed = np.isin(out, playable_codes) & (around >= BOXED_IN_NEIGHBOURS)
+        if not boxed.any():
+            break
+        out[boxed] = trees
+    regions, _ = label(out != trees)
+    green = np.unique(regions[out == LIE_CODE["green"]])
+    if green.size:
+        out[np.isin(out, playable_codes) & ~np.isin(regions, green)] = trees
+    return out
 
 
 # --- slice 4: rasterize --------------------------------------------------------------
@@ -533,6 +569,14 @@ def build_hole(
         margin_m=margin_m,
         corridor=corridor,
     )
+    sealed = seal_tree_pockets(lie)
+    if not np.array_equal(sealed, lie):
+        log.info(
+            "hole %d: %d cell(s) walled in by trees became trees",
+            hole_number,
+            int(np.sum(sealed != lie)),
+        )
+    lie = sealed
     tee_xy = shift((0.0, 0.0))
     pin_xy = to_xy(pin_ll.x, pin_ll.y)
     tees = label_tees(tee_polys, pin_ll, tags, to_xy)
