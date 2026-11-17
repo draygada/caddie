@@ -94,7 +94,11 @@ Minimum text size anywhere is 13 px; Apple's floor is 11 pt and we stay above it
 
 ## 4. Screens
 
-### 4.1 Hole screen (the only screen)
+### 4.0 Home (part 21)
+
+The first screen, every time. The app name, one line of what it does, and two large cards in the lower half of the screen: "Simulate a hole" (the desk posture) and "Play with GPS" (the course posture). No map. Each card is one tap into a hole screen that carries only that posture's controls; see `docs/parts/21-home-modes.md` for which controls go where. GPS is not a toggle: it is on in Play and absent in Simulate.
+
+### 4.1 Hole screen
 
 Phone, portrait. From top to bottom:
 

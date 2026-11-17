@@ -43,7 +43,8 @@ type State = {
   lieOverride: Lie | null;
   gps: { x: number; y: number; accuracy_m: number } | null;   // part 14
   recommendation: Recommendation | null;     // from policy grid (M1) or worker (M2)
-  setHole, setMode, setTee, setBall, setLieOverride, setGps, setRecommendation
+  screen: 'home' | 'simulate' | 'play';      // part 21, default 'home', never persisted
+  setHole, setMode, setTee, setBall, setLieOverride, setGps, setRecommendation, setScreen
 };
 ```
 
