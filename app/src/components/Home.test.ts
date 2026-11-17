@@ -17,7 +17,8 @@ describe('home page (part 21)', () => {
 
   it('keeps to the copy rules: no exclamation marks, no dashes as punctuation', () => {
     for (const text of [HOME_TAGLINE, ...MODES_ON_HOME.flatMap((m) => [m.title, m.body, m.where])]) {
-      expect(text).not.toMatch(/!|—|–| - /)
+      const dashes = new RegExp(`!|${String.fromCharCode(0x2014)}|${String.fromCharCode(0x2013)}| - `)
+      expect(text).not.toMatch(dashes)
       expect(text.length).toBeGreaterThan(0)
     }
   })
