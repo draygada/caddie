@@ -13,6 +13,7 @@ import type { Lie, LieName, Meta, Player, XY } from '../lib/types'
 import { useStore } from '../store'
 import { LieButtons } from './LieButtons'
 import { PlayItOut } from './PlayItOut'
+import { ShotLogger } from './ShotLogger'
 
 export const M_PER_YD = 0.9144
 
@@ -158,6 +159,7 @@ export function CaddiePanel() {
 
       <LieButtons />
       {body}
+      <ShotLogger />
 
       <div id="caddie-details" className={`${expanded ? 'flex' : 'hidden'} flex-col gap-3 pb-2 md:flex`}>
         {recommendation && offsetYd !== null && (

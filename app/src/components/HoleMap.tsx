@@ -23,6 +23,7 @@ import { BallMarker } from './BallMarker'
 import { GpsBadge } from './GpsBadge'
 import { MapLabels } from './MapLabels'
 import { PlayItOutLayer } from './PlayItOut'
+import { ShotLogLayer } from './ShotLogger'
 
 import { gridCorners, gridToLonLat } from '../lib/geo'
 import { heatmapDataUrl } from '../lib/heatmap'
@@ -295,6 +296,7 @@ export function HoleMap({ bundle, tee }: HoleMapProps) {
       {map && <BallMarker map={map} />}
       {map && <AimArrow map={map} />}
       {map && <PlayItOutLayer map={map} />}
+      {map && <ShotLogLayer map={map} />}
       {map && <MapLabels map={map} />}
       <div className="absolute top-16 right-2 z-10 flex flex-col gap-2 safe-top">
         <MapButton
