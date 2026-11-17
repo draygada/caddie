@@ -44,18 +44,37 @@ function lieAfter(b: HoleBundle, p: XY): Lie {
   return lieAt(b, p)
 }
 
-/** Follow `policyAt` (nearest cell) from `from` until a green cell, then sample the putts. */
-export function playOut(b: HoleBundle, player: Player, from: XY, lie: Lie, mode: Mode, rng: () => number): PlayOut {
+/** The player's own club and aim for the first shot of a play-out (part 22). */
+export interface FirstShot {
+  club: string
+  dir_deg: number
+}
+
+/**
+ * Follow `policyAt` (nearest cell) from `from` until a green cell, then sample the putts.
+ * With `first`, the first shot is the player's club and aim; the grid takes over after it.
+ */
+export function playOut(
+  b: HoleBundle,
+  player: Player,
+  from: XY,
+  lie: Lie,
+  mode: Mode,
+  rng: () => number,
+  first?: FirstShot,
+): PlayOut {
   const shots: Shot[] = []
   let pos = { x: from.x, y: from.y }
   let currentLie: Lie = lie
   let strokes = 0
   const pin = { x: b.meta.pin_xy[0], y: b.meta.pin_xy[1] }
   for (let k = 0; k < MAX_SHOTS && currentLie !== 5; k++) {
-    const policy = policyAt(b, pos)
+    const own = k === 0 && first ? first : null
+    const policy = own ?? policyAt(b, pos)
     if (!policy) break // off the hole with no action: stop
     // Part 17: the grid's aim is for the cell centre; step off it if a tree blocks it from here.
-    const dir_deg = clearAim(b, player, pos, currentLie, policy.club, policy.dir_deg)
+    // The player's own aim is taken as given.
+    const dir_deg = own ? own.dir_deg : clearAim(b, player, pos, currentLie, policy.club, policy.dir_deg)
     const s = sampleShot(b, player, pos, currentLie, policy.club, dir_deg, mode, rng)
     shots.push({ from: pos, to: { x: s.x, y: s.y }, club: policy.club, dir_deg, lie: s.lie, reward: s.reward })
     strokes += -s.reward
@@ -76,11 +95,12 @@ export function histogram(
   mode: Mode,
   n = 1000,
   seed = 7,
+  first?: FirstShot,
 ): Map<number, number> {
   const rng = mulberry32(seed)
   const counts = new Map<number, number>()
   for (let k = 0; k < n; k++) {
-    const { strokes } = playOut(b, player, from, lie, mode, rng)
+    const { strokes } = playOut(b, player, from, lie, mode, rng, first)
     counts.set(strokes, (counts.get(strokes) ?? 0) + 1)
   }
   return counts
