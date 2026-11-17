@@ -18,6 +18,7 @@ from caddie.value_iteration import solve
 from tests.fixtures.toy_hole import toy_hole, toy_player
 
 EIGHT = ("grid", "rollout", "pin", "centre", "greedy", "risk", "sparse2", "mcts")
+CLUB_ONLY = ("club_pin", "club_centre")  # part 18
 
 
 @pytest.fixture(scope="module")
@@ -31,9 +32,10 @@ def toy_drop():
 
 
 def test_registry_has_the_eight_ids_with_their_solution_needs():
-    assert tuple(APPROACHES) == EIGHT
+    assert tuple(APPROACHES) == EIGHT + CLUB_ONLY
     for a in APPROACHES.values():
-        assert isinstance(a, Approach) and a.id in EIGHT
+        assert isinstance(a, Approach) and a.id in EIGHT + CLUB_ONLY
+    assert all(APPROACHES[k].needs_solution and APPROACHES[k].point is None for k in CLUB_ONLY)
     assert {k for k, a in APPROACHES.items() if not a.needs_solution} == {"pin", "centre", "greedy"}
     assert {k for k, a in APPROACHES.items() if a.point is not None} == {
         "grid",
@@ -218,3 +220,38 @@ def test_sparse2_and_mcts_decide_a_toy_point_quickly(toy_drop):
         club, deg = point(27.5, 12.5, Lie.FAIRWAY)
         assert club in player.clubs and -90.0 <= deg <= 90.0
         assert time.perf_counter() - t0 < 0.5, name
+
+
+# --- part 18 slice 4: club-only approaches ------------------------------------------------------
+
+
+def test_club_only_approaches_are_the_restricted_solves(toy_drop):
+    from caddie.value_iteration import solve
+
+    solution, hole, player = toy_drop
+    flat = hole.lie.reshape(-1)
+    cells = playable_cells(hole, solution)
+    xs, ys = _cells_xy(hole, cells)
+    for name, aim in (("club_pin", "pin"), ("club_centre", "centre")):
+        ref = solve(hole, player, "drop", aim=aim)
+        pol = APPROACHES[name].build(hole, player, solution, "drop")
+        for x, y, cell in zip(xs, ys, cells, strict=True):
+            got = pol(float(x), float(y), Lie(int(flat[cell])))
+            assert got == (int(ref.club[cell]), int(ref.dir[cell]))
+
+
+def test_club_only_approaches_run_in_a_quick_benchmark_case():
+    from caddie.benchmark import CASES_PATH, load_cases, run_case
+    from caddie.value_iteration import solve as vi_solve
+
+    def plain(hole, player, mode, key, out_dir):
+        return vi_solve(hole, player, mode, K=200)
+
+    (case,) = load_cases(CASES_PATH, out_dir=None, ids=["water-carry-weak"], solve_fn=plain)
+    result = run_case(case, ["grid", "pin", "club_pin", "club_centre"], seed=0, check=False)
+    m = result["approaches"]
+    assert result["not_run"] == []
+    for name in CLUB_ONLY:
+        assert m["grid"]["mean_strokes"] <= m[name]["mean_strokes"] + 2 * m[name]["se_vs_grid"]
+        assert m[name]["build_s"] > 0.0
+    assert m["club_pin"]["mean_strokes"] <= m["pin"]["mean_strokes"] + 0.05

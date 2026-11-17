@@ -274,3 +274,116 @@ def test_driver_is_a_candidate_only_on_tee_cells():
     off_tee = np.setdiff1d(cells, driver_cells)
     assert np.all(sol.club[off_tee] == 1)
     assert np.all(np.isin(sol.club[driver_cells], [0, 1]))
+
+
+# part 18 slice 1: restricted backup --------------------------------------------------
+
+
+def test_aim_dir_index_is_none_for_free_and_zero_degrees_for_pin(toy):
+    from caddie.value_iteration import aim_dir_index
+
+    hole, _, _ = toy
+    playable, _ = state_mask(hole)
+    cells = np.flatnonzero(playable)
+    assert aim_dir_index(hole, cells, "free") is None
+    pin = aim_dir_index(hole, cells, "pin")
+    assert pin.shape == cells.shape
+    assert np.all(DIRECTIONS_DEG[pin] == 0.0)
+    with pytest.raises(ValueError):
+        aim_dir_index(hole, cells, "left")
+
+
+def test_pin_restricted_solve_aims_at_the_pin_and_is_never_better_than_free(toy):
+    hole, player, _ = toy
+    playable, _ = state_mask(hole)
+    free = solve(hole, player, "drop", tol=1e-8, max_sweeps=500)
+    pin = solve(hole, player, "drop", tol=1e-8, max_sweeps=500, aim="pin")
+    assert np.all(DIRECTIONS_DEG[pin.dir[playable]] == 0.0)
+    assert np.all(pin.club[playable] == 0)
+    assert np.all(pin.U[playable] >= free.U[playable] - 1e-6)
+    assert np.any(pin.U[playable] > free.U[playable] + 0.01)  # the bunkers and OB cost something
+
+
+def test_one_club_pin_solve_equals_evaluating_the_fixed_pin_policy(toy):
+    hole, player, tables = toy
+    playable, _ = state_mask(hole)
+    dir0 = int(np.flatnonzero(DIRECTIONS_DEG == 0)[0])
+    U = initial_values(hole, player)
+    for _ in range(500):  # policy evaluation: the single action (club 0, pin) in every cell
+        U_new, _, _ = bellman_backup(U, hole, player, tables, "drop", np.array([[0, dir0]]))
+        done = np.max(np.abs(U_new[playable] - U[playable])) < 1e-8
+        U = U_new
+        if done:
+            break
+    pin = solve(hole, player, "drop", tol=1e-8, max_sweeps=500, aim="pin")
+    assert np.allclose(pin.U[playable], -U[playable], atol=1e-5)
+
+
+def test_free_solve_is_unchanged_by_the_aim_argument(toy, replay_solution):
+    hole, player, _ = toy
+    again = solve(hole, player, "replay", K=200, max_sweeps=200, aim="free")
+    assert np.array_equal(again.U, replay_solution.U, equal_nan=True)
+    assert np.array_equal(again.dir, replay_solution.dir)
+
+
+# part 18 slice 2: clear aim and centre aim -------------------------------------------
+
+
+def _club(mu_c: float) -> ClubParams:
+    return ClubParams(mu_c, 4.0, 0.05, 0.05, 2.0, 1.0, sampled=True, stats=None)
+
+
+def test_clear_dir_index_steps_off_a_tree_and_keeps_the_target_in_the_open():
+    from caddie.value_iteration import clear_dir_index
+    from tests.fixtures.toy_hole import TREE_COLS, TREE_ROW, toy_tree_hole
+
+    hole, player = toy_tree_hole(), toy_player()
+    dir0 = int(np.flatnonzero(DIRECTIONS_DEG == 0)[0])
+    behind = (TREE_ROW - 1) * hole.cols + 5  # one row short of the trees, on the pin line
+    beyond = (TREE_ROW + 1) * hole.cols + 5  # past them
+    edge = (TREE_ROW - 1) * hole.cols + 1  # two columns left of the tree row
+    cells = np.array([behind, beyond, edge])
+    lies = np.full(3, int(Lie.FAIRWAY))
+    got = clear_dir_index(hole, player, cells, lies, 0, np.full(3, dir0))
+    assert got[1] == dir0
+    assert got[0] != dir0
+    # the step taken is the nearest clear one: every step closer to the pin line is blocked
+    from caddie.mdp import tree_ray_table
+
+    ray = tree_ray_table(hole)
+    bearing = float(pin_bearing_deg(hole, np.array([27.5]), np.array([17.5]))[0])
+    spread = player.clubs["test7i"].sigma_theta_deg
+
+    def blocked(di: int) -> bool:
+        deg = bearing + DIRECTIONS_DEG[di]
+        bins = np.rint(np.array([deg, deg - spread, deg + spread]) / 0.5).astype(int) % 720
+        return bool(np.any(ray[behind, bins] <= 0.5 * 25.0 + 2.5))
+
+    assert not blocked(int(got[0]))
+    assert all(blocked(d) for d in range(min(dir0, got[0]) + 1, max(dir0, got[0])))
+    assert blocked(dir0)
+    assert TREE_COLS[0] > 1  # the edge cell really is off the row
+
+
+def test_clear_dir_index_is_the_target_on_a_hole_without_trees(toy):
+    from caddie.value_iteration import aim_dir_index, clear_dir_index
+
+    hole, player, _ = toy
+    playable, _ = state_mask(hole)
+    cells = np.flatnonzero(playable)
+    target = aim_dir_index(hole, cells, "centre")
+    lies = hole.lie.reshape(-1)[cells]
+    assert np.array_equal(clear_dir_index(hole, player, cells, lies, 0, target), target)
+
+
+def test_pin_restricted_solve_converges_behind_trees():
+    from tests.fixtures.toy_hole import toy_tree_hole
+
+    hole, player = toy_tree_hole(), toy_player()
+    playable, _ = state_mask(hole)
+    pin = solve(hole, player, "drop", aim="pin")
+    assert pin.sweeps < 100
+    assert pin.residual_history[-1] < 0.01
+    free = solve(hole, player, "drop")
+    assert np.all(pin.U[playable] >= free.U[playable] - 0.02)
+    assert np.any(DIRECTIONS_DEG[pin.dir[playable]] != 0.0)  # some cell had to step aside

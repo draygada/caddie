@@ -113,6 +113,7 @@ METRIC_KEYS = {
     "p_blowup",
     "disagreement",
     "strokes_saved_per_round",
+    "se_vs_optimal",
 }
 
 
@@ -120,7 +121,7 @@ def test_evaluate_hole_metrics(toy_drop):
     solution, hole, player = toy_drop
     results = evaluate_hole(hole, player, solution, "drop", n=2000, seed=0)
     assert set(results) >= {"hole", "mode", "par", "n", "policies"}
-    assert set(results["policies"]) == {"optimal", "pin", "centre"}
+    assert list(results["policies"]) == ["optimal", "pin", "centre", "club_pin", "club_centre"]
     for name, m in results["policies"].items():
         assert set(m) == METRIC_KEYS, name
         assert sum(m["histogram"].values()) == 2000
@@ -235,7 +236,7 @@ def test_report_tables_and_figures_are_written(toy_drop, tmp_path):
     assert "p05" in text or "5th" in text
     lines = csv_path.read_text().splitlines()
     assert lines[0].split(",")[:3] == ["policy", "mean_strokes", "std_strokes"]
-    assert len(lines) == 4
+    assert len(lines) == 6  # header plus the five policies (part 18 added two)
 
     figs = tmp_path / "figures"
     plot_histograms(results, figs)
@@ -244,3 +245,95 @@ def test_report_tables_and_figures_are_written(toy_drop, tmp_path):
     for name in ("0_drop_histograms.png", "0_drop_heatmap_policy.png", "0_drop_disagreement.png"):
         path = figs / name
         assert path.exists() and path.stat().st_size > 5_000, name
+
+
+# --- part 18 slice 2: the part 17 rules in the baselines, and the centre aim ---------------------
+
+
+def test_club_centre_solve_uses_the_centre_policy_direction_in_every_cell(toy_drop):
+    from caddie.value_iteration import state_mask
+
+    _, hole, player = toy_drop
+    playable, _ = state_mask(hole)
+    sol = solve(hole, player, "drop", aim="centre")
+    policy = centre_policy(hole, player)
+    flat = hole.lie.reshape(-1)
+    for cell in np.flatnonzero(playable):
+        r, c = divmod(int(cell), hole.cols)
+        _, want = policy((c + 0.5) * hole.cell_m, (r + 0.5) * hole.cell_m, Lie(int(flat[cell])))
+        assert int(sol.dir[cell]) == want
+
+
+def test_baselines_step_their_aim_off_a_tree():
+    from tests.fixtures.toy_hole import TREE_ROW, toy_player, toy_tree_hole
+
+    hole, player = toy_tree_hole(), toy_player()
+    x, y = 27.5, (TREE_ROW - 1 + 0.5) * hole.cell_m  # right behind the tree row, on the pin line
+    for make in (pin_policy, centre_policy):
+        _, behind = make(hole, player)(x, y, Lie.FAIRWAY)
+        assert behind != DIR0
+        _, clear = make(hole, player)(x, y + 2 * hole.cell_m, Lie.FAIRWAY)
+        assert clear == DIR0
+    strokes = simulate(hole, player, pin_policy(hole, player), "drop", n=500, seed=0)
+    # A 25 m club on a 50 m wide grid can still run out of room going round the row, so a
+    # few plays hit the shot cap; without the clear aim step most of them would.
+    assert np.mean(strokes >= 40) < 0.02
+    assert np.median(strokes) < 8
+
+
+def test_baselines_keep_a_tee_only_club_on_the_tee():
+    from caddie.dispersion import ClubParams, Player
+    from tests.fixtures.toy_hole import toy_hole, toy_player
+
+    hole = toy_hole(hazards=False)
+    hole.lie[0, 4:7] = int(Lie.TEE)
+    base = toy_player()
+    driver = ClubParams(40.0, 4.0, 0.05, 0.05, 2.0, 1.0, sampled=True, stats=None)
+    player = Player(
+        15,
+        {"driver": driver, "test7i": base.clubs["test7i"]},
+        ["driver", "test7i"],
+        base.lie,
+        base.putting,
+    )
+    for make in (pin_policy, centre_policy):
+        policy = make(hole, player)
+        assert policy(hole.tee_xy[0], hole.tee_xy[1], Lie.TEE)[0] == 0
+        assert policy(hole.tee_xy[0], hole.tee_xy[1], Lie.FAIRWAY)[0] == 1
+
+
+# --- part 18 slice 3: club-only policies and the decomposition table ----------------------------
+
+
+def test_club_only_policies_are_no_better_than_optimal_and_the_table_adds_up(toy_drop, tmp_path):
+    from caddie.evaluate import DECOMPOSITION_STEPS, club_only_policy, decomposition_table
+
+    solution, hole, player = toy_drop
+    results = evaluate_hole(hole, player, solution, "drop", n=2000, seed=0)
+    pols = results["policies"]
+    opt = pols["optimal"]["mean_strokes"]
+    for name in ("club_pin", "club_centre"):
+        assert opt <= pols[name]["mean_strokes"] + 2 * pols[name]["se_vs_optimal"], name
+        assert pols[name]["se_vs_optimal"] >= 0.0
+    assert pols["optimal"]["se_vs_optimal"] == 0.0
+    # one club on the toy hole: choosing the club changes nothing, so club_pin is the pin rule
+    assert pols["club_pin"]["mean_strokes"] == pytest.approx(pols["pin"]["mean_strokes"])
+
+    text = decomposition_table(results)
+    rows = [line.split("|")[1:-1] for line in text.splitlines()[2:]]
+    assert [r[0].strip() for r in rows] == [label for _, label in DECOMPOSITION_STEPS]
+    means = [float(r[1]) for r in rows]
+    assert means == pytest.approx(
+        [pols[k]["mean_strokes"] for k, _ in DECOMPOSITION_STEPS], abs=0.005
+    )
+    assert rows[0][2].strip() == ""
+    for prev, row in zip(rows, rows[1:], strict=False):
+        assert float(row[2]) == pytest.approx(float(prev[1]) - float(row[1]), abs=0.011)
+
+    write_report_tables(results, tmp_path)
+    assert "## Decomposition" in (tmp_path / "0_drop.md").read_text()
+
+    # the policy is a plain grid lookup of the restricted solution
+    sol = solve(hole, player, "drop", aim="pin")
+    club, direction = club_only_policy(sol, hole)(hole.tee_xy[0], hole.tee_xy[1], Lie.FAIRWAY)
+    assert (club, direction) == (0, DIR0)

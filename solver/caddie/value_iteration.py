@@ -15,6 +15,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal
 
 import numpy as np
 from scipy.special import logsumexp
@@ -24,15 +25,20 @@ from caddie.geometry import Hole
 from caddie.mdp import (
     CANDIDATE_CARRY_FACTOR,
     DIRECTIONS_DEG,
+    FROM_LIE_NAME,
+    RAY_BIN_DEG,
+    TREE_STEP_BACK_M,
     Lie,
     OffsetTables,
     PenaltyMode,
     allowed_clubs,
     build_offset_tables,
+    low_flight_m,
     make_draws,
     pin_bearing_deg,
     step_batch,
     terminal_values,
+    tree_data,
 )
 
 log = logging.getLogger(__name__)
@@ -56,6 +62,10 @@ def _lam(objective: Objective) -> float | None:
         return lam
     raise ValueError(f"unknown objective {objective!r}")
 
+
+Aim = Literal["free", "pin", "centre"]
+"""Part 18: ``"free"`` backs up every direction; ``"pin"`` and ``"centre"`` restrict each
+cell to one target direction, so the solve chooses the club only."""
 
 LIE_PLOT = {"water": int(Lie.WATER), "ob": int(Lie.OB), "bunker": int(Lie.BUNKER)}
 PLAYABLE_LIES = (Lie.TEE, Lie.FAIRWAY, Lie.ROUGH, Lie.BUNKER)
@@ -118,6 +128,86 @@ def club_cells(hole: Hole, player: Player, cells: np.ndarray, club_idx: int) -> 
     return cells[mu[club_idx] <= CANDIDATE_CARRY_FACTOR * dist]
 
 
+def _centroid_xy(hole: Hole) -> tuple[float, float]:
+    r, c = np.nonzero(hole.lie == int(Lie.GREEN))
+    if r.size == 0:
+        raise ValueError("hole has no green cells")
+    return float(np.mean((c + 0.5) * hole.cell_m)), float(np.mean((r + 0.5) * hole.cell_m))
+
+
+def aim_dir_index(hole: Hole, cells: np.ndarray, aim: Aim) -> np.ndarray | None:
+    """The target direction index of each cell under ``aim``; None for ``"free"``.
+
+    ``"pin"`` is the 0 degree index everywhere. ``"centre"`` is the direction step
+    nearest the bearing of the green centroid (mean of the green cell centres) relative
+    to the cell's pin bearing.
+    """
+    if aim == "free":
+        return None
+    dir0 = int(np.flatnonzero(DIRECTIONS_DEG == 0)[0])
+    if aim == "pin":
+        return np.full(np.shape(cells), dir0, dtype=np.int64)
+    if aim == "centre":
+        gx, gy = _centroid_xy(hole)
+        r, c = np.divmod(np.asarray(cells), hole.cols)
+        x, y = (c + 0.5) * hole.cell_m, (r + 0.5) * hole.cell_m
+        rel = np.degrees(np.arctan2(gx - x, gy - y)) - pin_bearing_deg(hole, x, y)
+        rel = (rel + 180.0) % 360.0 - 180.0
+        return np.argmin(np.abs(DIRECTIONS_DEG[None, :] - rel[:, None]), axis=1).astype(np.int64)
+    raise ValueError(f"unknown aim {aim!r}")
+
+
+BLOCKED_FRACTION = 0.5  # as shot.ts: a mean shot stopped in the first half of its carry
+
+
+def clear_dir_index(
+    hole: Hole,
+    player: Player,
+    cells: np.ndarray,
+    from_lie: np.ndarray,
+    club_idx: int,
+    dir_idx: np.ndarray | int,
+) -> np.ndarray:
+    """The direction to play from each cell with ``club_idx`` when ``dir_idx`` is the target.
+
+    Part 18's clear aim rule: the target unless trees block it, then the nearest 2 degree
+    step that is clear (lower angle first on a tie), or the target again if none is. A
+    direction is blocked when the cell's ray table has a tree at or before
+    ``min(low_flight_m(c), BLOCKED_FRACTION * c + TREE_STEP_BACK_M)`` on the aim line or
+    one ``sigma_theta`` either side of it, ``c`` being the mean carry from the cell's lie.
+    Reads the per-cell table, so it is exact at cell centres only.
+    """
+    cells = np.asarray(cells, dtype=np.int64)
+    target = np.broadcast_to(np.asarray(dir_idx, dtype=np.int64), cells.shape).copy()
+    trees = tree_data(hole)
+    if trees is None or cells.size == 0:
+        return target
+    club = player.clubs[player.club_order[club_idx]]
+    carry = np.empty(cells.shape)
+    spread = np.empty(cells.shape)
+    from_lie = np.broadcast_to(np.asarray(from_lie, dtype=np.int64), cells.shape)
+    for value in np.unique(from_lie):
+        name = FROM_LIE_NAME.get(Lie(int(value)), "rough") if value in set(Lie) else "rough"
+        mult = player.lie[name]
+        here = from_lie == value
+        carry[here] = club.mu_c * mult["carry"]
+        spread[here] = club.sigma_theta_deg * mult["sigma"]
+    reach = np.minimum(low_flight_m(carry), BLOCKED_FRACTION * carry + TREE_STEP_BACK_M)
+    r, c = np.divmod(cells, hole.cols)
+    bearing = pin_bearing_deg(hole, (c + 0.5) * hole.cell_m, (r + 0.5) * hole.cell_m)
+    n_bins = trees.ray.shape[1]
+    blocked = np.zeros((cells.size, len(DIRECTIONS_DEG)), dtype=bool)
+    for sign in (0.0, -1.0, 1.0):
+        deg = bearing[:, None] + DIRECTIONS_DEG[None, :] + sign * spread[:, None]
+        bins = np.rint(deg / RAY_BIN_DEG).astype(np.int64) % n_bins
+        blocked |= trees.ray[cells[:, None], bins] <= reach[:, None]
+    steps = np.arange(len(DIRECTIONS_DEG))[None, :] - target[:, None]
+    cost = 2 * np.abs(steps) + (steps > 0)  # nearest first, the lower angle on a tie
+    cost = np.where(blocked, np.iinfo(np.int64).max, cost)
+    best = np.argmin(cost, axis=1)
+    return np.where(blocked.all(axis=1), target, best)
+
+
 def bellman_backup(
     U: np.ndarray,
     hole: Hole,
@@ -126,12 +216,16 @@ def bellman_backup(
     mode: PenaltyMode,
     candidates: np.ndarray,
     objective: Objective = "strokes",
+    aim_dirs: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """One synchronous sweep over every playable cell.
 
     Actions are processed in a loop with the cells vectorized, so memory is
     (cells x K) per action, never (cells x actions x K). Returns
     ``(U_new, best_club, best_dir)``; ``U`` is not modified.
+
+    ``aim_dirs`` (part 18), shape (playable cells, clubs), restricts each cell to one
+    direction per club; ``candidates`` is then ignored and every club is tried.
     """
     playable, _ = state_mask(hole)
     cells = np.flatnonzero(playable)
@@ -146,8 +240,18 @@ def bellman_backup(
     off_tee_ok = allowed_clubs(player, Lie.FAIRWAY)
     tee_sel = np.flatnonzero(from_lie == Lie.TEE)
     everywhere = np.arange(cells.size)
-    for club_idx, dir_idx in candidates:
+    if aim_dirs is None:
+        work = ((int(c), int(d), None) for c, d in candidates)
+    else:
+        work = (
+            (c, int(d), np.flatnonzero(aim_dirs[:, c] == d))
+            for c in range(aim_dirs.shape[1])
+            for d in np.unique(aim_dirs[:, c])
+        )
+    for club_idx, dir_idx, subset in work:
         sel = everywhere if off_tee_ok[int(club_idx)] else tee_sel
+        if subset is not None:
+            sel = np.intersect1d(sel, subset, assume_unique=True)
         if sel.size == 0:
             continue
         nxt, r = step_batch(
@@ -182,8 +286,12 @@ def solve(
     seed: int = 0,
     log_every: int = 5,
     objective: Objective = "strokes",
+    aim: Aim = "free",
 ) -> Solution:
     """Value iteration to residual < ``tol``; returns strokes-to-go and the greedy policy.
+
+    ``aim`` other than ``"free"`` is part 18's club-only solve: same draws and tolerance,
+    one direction per cell and club (see :func:`aim_dir_index`).
 
     ``objective`` other than ``"strokes"`` is part 16's risk-sensitive variant; see
     :data:`Objective`.
@@ -193,6 +301,17 @@ def solve(
     tables = build_offset_tables(player, draws)
     candidates = all_actions(player)
     playable, _ = state_mask(hole)
+    cells = np.flatnonzero(playable)
+    target = aim_dir_index(hole, cells, aim)
+    aim_dirs = None
+    if target is not None:
+        lies = hole.lie.reshape(-1)[cells]
+        aim_dirs = np.column_stack(
+            [
+                clear_dir_index(hole, player, cells, lies, k, target)
+                for k in range(len(player.club_order))
+            ]
+        )
     U = initial_values(hole, player)
     club = np.full(U.shape, NO_ACTION, dtype=np.uint8)
     direction = np.full(U.shape, NO_ACTION, dtype=np.uint8)
@@ -201,7 +320,7 @@ def solve(
     for sweeps in range(1, max_sweeps + 1):
         t0 = time.perf_counter()
         U_new, club, direction = bellman_backup(
-            U, hole, player, tables, mode, candidates, objective
+            U, hole, player, tables, mode, candidates, objective, aim_dirs
         )
         residual = float(np.max(np.abs(U_new[playable] - U[playable])))
         history.append(residual)

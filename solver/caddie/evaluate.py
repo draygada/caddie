@@ -21,6 +21,7 @@ from caddie.mdp import (
     DIRECTIONS_DEG,
     Lie,
     PenaltyMode,
+    allowed_clubs,
     build_offset_tables,
     make_draws,
     pin_bearing_deg,
@@ -28,7 +29,13 @@ from caddie.mdp import (
     terminal_values,
 )
 from caddie.putting import build_putting_table
-from caddie.value_iteration import NO_ACTION, Solution, solve, write_value_png
+from caddie.value_iteration import (
+    NO_ACTION,
+    Solution,
+    clear_dir_index,
+    solve,
+    write_value_png,
+)
 
 log = logging.getLogger(__name__)
 
@@ -63,19 +70,37 @@ def optimal_policy(solution: Solution, hole: Hole) -> Policy:
     return policy
 
 
+def _clear(hole: Hole, player: Player, x: float, y: float, lie: Lie, club: int, di: int) -> int:
+    """Part 18's clear aim step from the cell under (x, y)."""
+    cell = np.array([_cell_index(hole, x, y)])
+    return int(clear_dir_index(hole, player, cell, np.array([int(lie)]), club, di)[0])
+
+
+def club_only_policy(solution: Solution, hole: Hole) -> Policy:
+    """Part 18: the policy of a club-only solve (``solve(..., aim="pin" | "centre")``).
+
+    A grid lookup like :func:`optimal_policy`; the restricted solve already holds one
+    direction per cell.
+    """
+    return optimal_policy(solution, hole)
+
+
 def pin_policy(hole: Hole, player: Player) -> Policy:
     """Aim at the pin with the longest club whose mean carry is at most the distance.
 
     When every club carries farther than the pin, the shortest club is used (the part
     file says "the longest club" here, which would hit a driver from ten metres; flagged).
+    Part 18: only clubs allowed from the lie are considered (tee-only clubs, part 17),
+    and the aim steps to the nearest clear direction when trees block the pin line.
     """
     mu = np.array([player.clubs[name].mu_c for name in player.club_order])
 
     def policy(x: float, y: float, lie: Lie) -> tuple[int, int]:
         dist = float(np.hypot(hole.pin_xy[0] - x, hole.pin_xy[1] - y))
-        reach = np.flatnonzero(mu <= dist)
-        club = int(reach[np.argmax(mu[reach])]) if reach.size else int(np.argmin(mu))
-        return club, DIR0
+        ok = np.flatnonzero(allowed_clubs(player, lie))
+        reach = ok[mu[ok] <= dist]
+        club = int(reach[np.argmax(mu[reach])]) if reach.size else int(ok[np.argmin(mu[ok])])
+        return club, _clear(hole, player, x, y, lie, club, DIR0)
 
     return policy
 
@@ -88,17 +113,21 @@ def green_centroid(hole: Hole) -> tuple[float, float]:
 
 
 def centre_policy(hole: Hole, player: Player) -> Policy:
-    """Aim at the green centroid with the club whose mean carry is closest to that distance."""
+    """Aim at the green centroid with the club whose mean carry is closest to that distance.
+
+    Part 18: among the clubs allowed from the lie, with the clear aim step as ``pin_policy``.
+    """
     mu = np.array([player.clubs[name].mu_c for name in player.club_order])
     gx, gy = green_centroid(hole)
 
     def policy(x: float, y: float, lie: Lie) -> tuple[int, int]:
         dist = float(np.hypot(gx - x, gy - y))
-        club = int(np.argmin(np.abs(mu - dist)))
+        ok = np.flatnonzero(allowed_clubs(player, lie))
+        club = int(ok[np.argmin(np.abs(mu[ok] - dist))])
         bearing_centroid = float(np.degrees(np.arctan2(gx - x, gy - y)))
         bearing_pin = float(pin_bearing_deg(hole, np.array([x]), np.array([y]))[0])
         rel = (bearing_centroid - bearing_pin + 180.0) % 360.0 - 180.0
-        return club, _nearest_dir_index(rel)
+        return club, _clear(hole, player, x, y, lie, club, _nearest_dir_index(rel))
 
     return policy
 
@@ -216,6 +245,36 @@ def _metrics(strokes: np.ndarray, par: int) -> dict:
     }
 
 
+CLUB_ONLY_AIMS = {"club_pin": "pin", "club_centre": "centre"}
+# A fixed aim can leave a cell beside trees with a small chance of getting out per shot, so
+# the residual falls slowly (about 3% a sweep on hole 11). The sweeps are cheap, 13 actions.
+CLUB_ONLY_MAX_SWEEPS = 400
+
+DECOMPOSITION_STEPS = (
+    ("pin", "Pin rule"),
+    ("club_pin", "Choose the club, aim at pin"),
+    ("club_centre", "Choose the club, aim at centre"),
+    ("optimal", "Choose club and aim"),
+)
+
+
+def decomposition_table(results: dict) -> str:
+    """Part 18: the gain of the optimal policy split into club choice and aim choice.
+
+    Markdown rows in the order of :data:`DECOMPOSITION_STEPS`. Each gain is the mean of
+    the row above minus this row's mean, both as printed, so the column adds up.
+    """
+    pols = results["policies"]
+    lines = ["| Step | Mean strokes | Gain over previous |", "| --- | --- | --- |"]
+    prev: float | None = None
+    for key, label in DECOMPOSITION_STEPS:
+        mean = round(pols[key]["mean_strokes"], 2)
+        gain = "" if prev is None else f"{prev - mean:.2f}"
+        lines.append(f"| {label} | {mean:.2f} | {gain} |")
+        prev = mean
+    return "\n".join(lines)
+
+
 def evaluate_hole(
     hole: Hole,
     player: Player,
@@ -224,7 +283,9 @@ def evaluate_hole(
     n: int = 2000,
     seed: int = 0,
 ) -> dict:
-    """Metrics for the optimal, pin and centre policies on one hole and mode.
+    """Metrics for the optimal, pin, centre and club-only policies on one hole and mode.
+
+    ``se_vs_optimal`` is the standard error of the paired difference to the optimal policy.
 
     The histogram bins scores rounded to the nearest whole stroke (the simulation adds
     expected putts, which are fractional). ``strokes_saved_per_round`` is labelled as an
@@ -235,11 +296,20 @@ def evaluate_hole(
         "pin": pin_policy(hole, player),
         "centre": centre_policy(hole, player),
     }
+    # Part 18: the club-only solves, with the free solve's draws and tolerance.
+    for name, aim in CLUB_ONLY_AIMS.items():
+        restricted = solve(hole, player, mode, seed=seed, aim=aim, max_sweeps=CLUB_ONLY_MAX_SWEEPS)
+        policies[name] = club_only_policy(restricted, hole)
     out: dict[str, dict] = {}
+    optimal_strokes: np.ndarray | None = None
     for name, policy in policies.items():
         strokes = simulate(hole, player, policy, mode, n=n, seed=seed)
+        if optimal_strokes is None:
+            optimal_strokes = strokes
         m = _metrics(strokes, hole.par)
         m["disagreement"] = 0.0 if name == "optimal" else disagreement(hole, solution, policy)
+        diff = strokes - optimal_strokes
+        m["se_vs_optimal"] = float(diff.std(ddof=1) / np.sqrt(n)) if n > 1 else 0.0
         out[name] = m
         log.info(
             "hole %s %s %s: mean %.3f sd %.3f blowup %.3f disagreement %.3f",
@@ -421,6 +491,17 @@ def write_report_tables(results: dict, out_dir: Path) -> None:
         lines.append(
             f"| {s} | " + " | ".join(str(m["histogram"].get(s, 0)) for m in pols.values()) + " |"
         )
+    if all(key in pols for key, _ in DECOMPOSITION_STEPS):
+        lines += [
+            "",
+            "## Decomposition",
+            "",
+            decomposition_table(results),
+            "",
+            "Each gain is the row above minus this row. Choosing the club is value iteration "
+            "over clubs with the aim fixed; every row obeys the tee-only driver and steps its "
+            "aim to the nearest clear direction when trees block it.",
+        ]
     rob = results.get("robustness")
     if rob:
         lines += [

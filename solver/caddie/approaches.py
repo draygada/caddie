@@ -17,7 +17,14 @@ from pathlib import Path
 import numpy as np
 
 from caddie.dispersion import Player
-from caddie.evaluate import Policy, centre_policy, optimal_policy, pin_policy
+from caddie.evaluate import (
+    CLUB_ONLY_MAX_SWEEPS,
+    Policy,
+    centre_policy,
+    club_only_policy,
+    optimal_policy,
+    pin_policy,
+)
 from caddie.geometry import Hole
 from caddie.mdp import (
     DIRECTIONS_DEG,
@@ -260,6 +267,33 @@ def build_risk(
     )
 
 
+# --- part 18: club-only solves (value iteration over clubs, the aim fixed) ----------------------
+
+
+def build_club_pin(
+    hole: Hole,
+    player: Player,
+    solution: Solution | None,
+    mode: PenaltyMode,
+    K: int = 200,
+    seed: int = 0,
+) -> Policy:
+    sol = solve(hole, player, mode, K=K, seed=seed, aim="pin", max_sweeps=CLUB_ONLY_MAX_SWEEPS)
+    return club_only_policy(sol, hole)
+
+
+def build_club_centre(
+    hole: Hole,
+    player: Player,
+    solution: Solution | None,
+    mode: PenaltyMode,
+    K: int = 200,
+    seed: int = 0,
+) -> Policy:
+    sol = solve(hole, player, mode, K=K, seed=seed, aim="centre", max_sweeps=CLUB_ONLY_MAX_SWEEPS)
+    return club_only_policy(sol, hole)
+
+
 # --- sparse sampling at depth 2 (Ch 9.4) --------------------------------------------------------
 
 SPARSE_M1 = 20
@@ -488,4 +522,6 @@ APPROACHES: dict[str, Approach] = {
     "mcts": Approach(
         "mcts", build_mcts, mcts_point_policy_builder, needs_solution=True, memoise=True
     ),
+    "club_pin": Approach("club_pin", build_club_pin, None, needs_solution=True),
+    "club_centre": Approach("club_centre", build_club_centre, None, needs_solution=True),
 }
