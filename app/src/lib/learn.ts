@@ -5,6 +5,14 @@
  */
 import type { ClubParams, ClubStats, IG, NIG } from './types'
 
+/** One learned shot: what `updateClubStats` takes, plus the club it belongs to. */
+export interface Observation {
+  club: string
+  carry: number
+  total: number
+  lateral: number
+}
+
 /** Normal with unknown mean and variance: one observation `x`. */
 export function updateNig(s: NIG, x: number): NIG {
   const kappa = s.kappa + 1

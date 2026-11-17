@@ -1,0 +1,123 @@
+import { describe, expect, it } from 'vitest'
+
+import { updateClubStats } from './learn'
+import { type LoggedShot, MAX_AIM_CHANGE_DEG, MAX_LEARN_ACCURACY_M, skipReason, toObservation } from './shotLog'
+import { testBundle } from './testBundle'
+import type { HoleBundle, Player } from './types'
+
+/** A 50 m wide, 250 m long strip: fairway, with a rough column on the right and a green row at the far end. */
+function strip(): HoleBundle {
+  const rows = 50
+  const cols = 10
+  const lie = new Uint8Array(rows * cols).fill(2)
+  for (let r = 0; r < rows; r++) lie[r * cols + 9] = 3
+  for (let c = 0; c < cols; c++) lie[49 * cols + c] = 5
+  return testBundle(
+    { lie, value: new Float32Array(rows * cols), club: new Uint8Array(rows * cols), dir: new Uint8Array(rows * cols) },
+    { rows, cols, pin_xy: [27.5, 247.5] },
+  )
+}
+
+const CLUB = { mu_c: 140, sigma_theta_deg: 5, sigma_d: 0.06, p: 0.05, mu_r: 6, sigma_r: 2, sampled: true, stats: null }
+const player: Player = {
+  handicap: 15,
+  clubs: { '7i': CLUB },
+  club_order: ['7i'],
+  lie: {
+    tee: { carry: 1, sigma: 1, roll: 1 },
+    fairway: { carry: 1, sigma: 1, roll: 1 },
+    rough: { carry: 0.9, sigma: 1.3, roll: 0.5 },
+    bunker: { carry: 0.8, sigma: 1.6, roll: 0 },
+  },
+  putting: { distance_m: [1], expected_putts: [1.5] },
+}
+
+function shot(over: Partial<LoggedShot> = {}): LoggedShot {
+  return {
+    start: { x: 22.5, y: 12.5 },
+    end: { x: 22.5, y: 162.5 },
+    startAcc: 4,
+    endAcc: 5,
+    lie: 2,
+    club: '7i',
+    aimDeg: 0,
+    recAimDeg: 0,
+    t: 1,
+    outcome: 'normal',
+    ...over,
+  }
+}
+
+describe('toObservation', () => {
+  const b = strip()
+
+  it('straight 150 m on the fairway: carry is total less the mean roll, no lateral', () => {
+    const o = toObservation(b, player, shot())
+    expect(o).not.toBeNull()
+    expect(o?.club).toBe('7i')
+    expect(o?.total).toBeCloseTo(150, 9)
+    expect(o?.carry).toBeCloseTo(144, 9)
+    expect(o?.lateral).toBeCloseTo(0, 9)
+  })
+
+  it('10 m right: update_club_stats recovers the observed angle', () => {
+    const o = toObservation(b, player, shot({ end: { x: 32.5, y: 162.5 } }))
+    if (!o) throw new Error('skipped')
+    const total = Math.hypot(10, 150)
+    const theta = Math.atan2(10, 150)
+    expect(o.total).toBeCloseTo(total, 9)
+    expect(o.carry).toBeCloseTo(total - 6, 9)
+    expect(o.lateral).toBeCloseTo((total - 6) * Math.tan(theta), 9)
+    expect(o.lateral).toBeGreaterThan(0)
+    const prior = { n: 0, carry: { m: 140, kappa: 5, alpha: 2.5, beta: 100 }, theta: { alpha: 2.5, beta: 0 }, roll: { m: 6, kappa: 5, alpha: 2.5, beta: 6 } }
+    const after = updateClubStats(prior, o.carry, o.total, o.lateral)
+    expect(after.theta.beta).toBeCloseTo(((theta * 180) / Math.PI) ** 2 / 2, 9)
+    expect(after.roll.m).toBeCloseTo(6, 9)
+  })
+
+  it('measures left and right against the aim line, not the grid', () => {
+    // Aimed 90 degrees (along +x) from the left edge; the ball finishes 3 m up the hole: left of the line.
+    const o = toObservation(b, player, shot({ start: { x: 2.5, y: 100 }, end: { x: 42.5, y: 103 }, aimDeg: 90, recAimDeg: 90 }))
+    expect(o?.lateral).toBeLessThan(0)
+  })
+
+  it('uses the roll multiplier of the lie where the ball stopped', () => {
+    const rough = toObservation(b, player, shot({ end: { x: 47.5, y: 162.5 } }))
+    expect(rough?.carry).toBeCloseTo(Math.hypot(25, 150) - 6 * 0.5, 9)
+    const stored = toObservation(b, player, shot({ endLie: 4 }))
+    expect(stored?.carry).toBeCloseTo(150, 9) // bunker: no roll, and the stored lie wins over the grid
+    const green = toObservation(b, player, shot({ end: { x: 22.5, y: 247.5 }, outcome: 'green' }))
+    expect(green?.carry).toBeCloseTo(235 - 6, 9)
+  })
+
+  it('skips a penalty shot', () => {
+    const s = shot({ outcome: 'penalty' })
+    expect(skipReason(b, player, s)).toBe('penalty')
+    expect(toObservation(b, player, s)).toBeNull()
+  })
+
+  it('skips when either end has accuracy worse than 10 m; a dragged end (0) is trusted', () => {
+    expect(MAX_LEARN_ACCURACY_M).toBe(10)
+    expect(skipReason(b, player, shot({ endAcc: 10.5 }))).toBe('accuracy')
+    expect(skipReason(b, player, shot({ startAcc: 25 }))).toBe('accuracy')
+    expect(skipReason(b, player, shot({ startAcc: 10, endAcc: 0 }))).toBeNull()
+  })
+
+  it('skips when the aim was moved more than 30 degrees off the recommendation', () => {
+    expect(MAX_AIM_CHANGE_DEG).toBe(30)
+    expect(skipReason(b, player, shot({ aimDeg: 31 }))).toBe('aim')
+    expect(skipReason(b, player, shot({ aimDeg: -30 }))).toBeNull()
+    expect(skipReason(b, player, shot({ aimDeg: 175, recAimDeg: -175, end: { x: 22.5, y: 2 }, start: { x: 22.5, y: 152 } }))).toBeNull()
+  })
+
+  it('skips a shot that started on the green, one still open, and an unknown club', () => {
+    expect(skipReason(b, player, shot({ lie: 5 }))).toBe('green')
+    expect(skipReason(b, player, shot({ end: null, endAcc: null }))).toBe('open')
+    expect(skipReason(b, player, shot({ club: 'putter' }))).toBe('club')
+  })
+
+  it('skips a shot too short to leave a carry after the mean roll, or one that went backwards', () => {
+    expect(skipReason(b, player, shot({ end: { x: 22.5, y: 17.5 } }))).toBe('short')
+    expect(skipReason(b, player, shot({ end: { x: 22.5, y: 2.5 } }))).toBe('short')
+  })
+})
