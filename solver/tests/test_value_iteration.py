@@ -274,3 +274,53 @@ def test_driver_is_a_candidate_only_on_tee_cells():
     off_tee = np.setdiff1d(cells, driver_cells)
     assert np.all(sol.club[off_tee] == 1)
     assert np.all(np.isin(sol.club[driver_cells], [0, 1]))
+
+
+# part 18 slice 1: restricted backup --------------------------------------------------
+
+
+def test_aim_dir_index_is_none_for_free_and_zero_degrees_for_pin(toy):
+    from caddie.value_iteration import aim_dir_index
+
+    hole, _, _ = toy
+    playable, _ = state_mask(hole)
+    cells = np.flatnonzero(playable)
+    assert aim_dir_index(hole, cells, "free") is None
+    pin = aim_dir_index(hole, cells, "pin")
+    assert pin.shape == cells.shape
+    assert np.all(DIRECTIONS_DEG[pin] == 0.0)
+    with pytest.raises(ValueError):
+        aim_dir_index(hole, cells, "left")
+
+
+def test_pin_restricted_solve_aims_at_the_pin_and_is_never_better_than_free(toy):
+    hole, player, _ = toy
+    playable, _ = state_mask(hole)
+    free = solve(hole, player, "drop", tol=1e-8, max_sweeps=500)
+    pin = solve(hole, player, "drop", tol=1e-8, max_sweeps=500, aim="pin")
+    assert np.all(DIRECTIONS_DEG[pin.dir[playable]] == 0.0)
+    assert np.all(pin.club[playable] == 0)
+    assert np.all(pin.U[playable] >= free.U[playable] - 1e-6)
+    assert np.any(pin.U[playable] > free.U[playable] + 0.01)  # the bunkers and OB cost something
+
+
+def test_one_club_pin_solve_equals_evaluating_the_fixed_pin_policy(toy):
+    hole, player, tables = toy
+    playable, _ = state_mask(hole)
+    dir0 = int(np.flatnonzero(DIRECTIONS_DEG == 0)[0])
+    U = initial_values(hole, player)
+    for _ in range(500):  # policy evaluation: the single action (club 0, pin) in every cell
+        U_new, _, _ = bellman_backup(U, hole, player, tables, "drop", np.array([[0, dir0]]))
+        done = np.max(np.abs(U_new[playable] - U[playable])) < 1e-8
+        U = U_new
+        if done:
+            break
+    pin = solve(hole, player, "drop", tol=1e-8, max_sweeps=500, aim="pin")
+    assert np.allclose(pin.U[playable], -U[playable], atol=1e-5)
+
+
+def test_free_solve_is_unchanged_by_the_aim_argument(toy, replay_solution):
+    hole, player, _ = toy
+    again = solve(hole, player, "replay", K=200, max_sweeps=200, aim="free")
+    assert np.array_equal(again.U, replay_solution.U, equal_nan=True)
+    assert np.array_equal(again.dir, replay_solution.dir)
