@@ -7,9 +7,10 @@ import { create } from 'zustand'
 import { createJSONStorage, persist, type StateStorage } from 'zustand/middleware'
 
 import { lieAt, policyAt, valueNearest } from './lib/grid'
+import { learnedPlayer, type Observation } from './lib/learn'
 import { createRolloutWorker, RolloutClient, type RolloutResult } from './lib/rollout'
 import { clearAim, pinBearingDeg } from './lib/shot'
-import { type LoggedShot, logKey } from './lib/shotLog'
+import { type LoggedShot, logKey, toObservation } from './lib/shotLog'
 import type { HoleBundle, Lie, Mode, Player, XY } from './lib/types'
 
 export type HoleId = 10 | 11 | 12 | 'toy'
@@ -254,6 +255,35 @@ export function setRolloutClient(client: RolloutClientLike | null): void {
   rolloutClient = client
 }
 
+// --- part 15: learning from the log ------------------------------------------------------------
+
+/** Every learnable shot in the log, all rounds, oldest round first. Needs a bundle and a player. */
+export function learnedObservations(s: Pick<State, 'logs' | 'bundle' | 'player'>): Observation[] {
+  const { bundle, player } = s
+  if (!bundle || !player) return []
+  const out: Observation[] = []
+  for (const key of Object.keys(s.logs).sort())
+    for (const shot of s.logs[key]) {
+      const o = toObservation(bundle, player, shot)
+      if (o) out.push(o)
+    }
+  return out
+}
+
+let memo: { logs: State['logs']; player: Player; bundle: HoleBundle; learned: Player } | null = null
+
+/**
+ * The player the rollout plans with: the stored player, or with "Use my course shots" on,
+ * the player learned from the log. Recomputed from the log, never stored.
+ */
+export function planningPlayer(s: Pick<State, 'logs' | 'bundle' | 'player' | 'learn'>): Player | null {
+  const { player, bundle } = s
+  if (!s.learn || !player || !bundle) return player
+  if (!memo || memo.logs !== s.logs || memo.player !== player || memo.bundle !== bundle)
+    memo = { logs: s.logs, player, bundle, learned: learnedPlayer(player, learnedObservations(s)) }
+  return memo.learned
+}
+
 export const WORKER_DRAWS = 100
 
 /**
@@ -267,13 +297,17 @@ useStore.subscribe((state, prev) => {
     state.ball === prev.ball &&
     state.lieOverride === prev.lieOverride &&
     state.bundle === prev.bundle &&
-    state.useWorker === prev.useWorker
+    state.useWorker === prev.useWorker &&
+    state.learn === prev.learn &&
+    (!state.learn || state.logs === prev.logs)
   )
     return
   const grid = gridRecommendation(state.bundle, state.ball, state.player, state.lieOverride)
   state.setRecommendation(grid)
-  const { bundle, ball, player, mode } = state
-  if (!state.useWorker || !rolloutClient || !bundle || !ball || !player || !grid) return
+  const { bundle, ball, mode } = state
+  // Part 15: the grid was solved for the stored player, so a learned player needs the worker.
+  const player = planningPlayer(state)
+  if (!(state.useWorker || state.learn) || !rolloutClient || !bundle || !ball || !player || !grid) return
   const lie = state.lieOverride ?? lieAt(bundle, ball)
   if (lie < 1 || lie > 4) return
   rolloutClient.setBundle(bundle)

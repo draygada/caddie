@@ -3,7 +3,7 @@
  * solver/caddie/dispersion.py (Ch 4.2). Pure, no React. docs/fixtures/stats_updates.json
  * is the parity fixture.
  */
-import type { ClubParams, ClubStats, IG, NIG } from './types'
+import type { ClubParams, ClubStats, IG, NIG, Player } from './types'
 
 /** One learned shot: what `updateClubStats` takes, plus the club it belongs to. */
 export interface Observation {
@@ -76,4 +76,23 @@ export function statsFromParams(c: ClubParams, kappa = PRIOR_KAPPA): ClubStats {
     theta: { alpha, beta: scale * c.sigma_theta_deg ** 2 },
     roll: { m: c.mu_r, kappa, alpha, beta: scale * c.sigma_r ** 2 },
   }
+}
+
+/**
+ * The player after folding `observations` in, in order. Only the clubs that were hit change;
+ * `p`, the lie multipliers and the putting table are never learned. `base` is not modified:
+ * the learned player is recomputed from the log, never stored (part 15).
+ */
+export function learnedPlayer(base: Player, observations: Observation[]): Player {
+  const stats = new Map<string, ClubStats>()
+  for (const o of observations) {
+    const club = base.clubs[o.club]
+    if (!club) continue
+    const s = stats.get(o.club) ?? club.stats ?? statsFromParams(club)
+    stats.set(o.club, updateClubStats(s, o.carry, o.total, o.lateral))
+  }
+  if (stats.size === 0) return base
+  const clubs = { ...base.clubs }
+  for (const [id, s] of stats) clubs[id] = { ...paramsFromStats(s, base.clubs[id].p), sampled: base.clubs[id].sampled }
+  return { ...base, clubs }
 }

@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
 
-import { paramsFromStats, PRIOR_KAPPA, statsFromParams, updateClubStats, updateIg, updateNig } from './learn'
+import { learnedPlayer, paramsFromStats, PRIOR_KAPPA, statsFromParams, updateClubStats, updateIg, updateNig } from './learn'
 import { toyPlayerDoc } from './toyFiles'
 import type { ClubStats } from './types'
 
@@ -85,5 +85,51 @@ describe('statsFromParams and paramsFromStats', () => {
     expect(p.sigma_r).toBeCloseTo(Math.sqrt(s.roll.beta / (s.roll.alpha - 1)), 12)
     expect(p.p).toBe(0.1)
     expect(p.stats).toBe(s)
+  })
+})
+
+describe('learnedPlayer', () => {
+  const base = toyPlayerDoc()
+  const id = base.club_order[0]
+  const c = base.clubs[id]
+  const two: typeof base = {
+    ...base,
+    club_order: ['a', 'b'],
+    clubs: { a: { ...c, stats: fx.prior, sampled: true }, b: { ...c, stats: null, sampled: false } },
+  }
+
+  it('returns the base player itself when there is nothing to learn from', () => {
+    expect(learnedPlayer(base, [])).toBe(base)
+  })
+
+  it('changes exactly the clubs that were hit and never mutates the base', () => {
+    const before = JSON.stringify(two)
+    const out = learnedPlayer(two, [{ club: 'a', carry: 212.4, total: 231, lateral: -8.2 }])
+    expect(JSON.stringify(two)).toBe(before)
+    expect(out.clubs.b).toBe(two.clubs.b)
+    expect(out.clubs.a.stats).toEqual(fx.after[0])
+    expect(out.clubs.a.mu_c).toBeCloseTo(fx.after[0].carry.m, 12)
+    expect(out.clubs.a.p).toBe(c.p)
+    expect(out.lie).toBe(two.lie)
+    expect(out.putting).toBe(two.putting)
+  })
+
+  it('folds every observation in order', () => {
+    const obs = fx.observations.map(([carry, total, lateral]) => ({ club: 'a', carry, total, lateral }))
+    expectStats(learnedPlayer(two, obs).clubs.a.stats as ClubStats, fx.after[4])
+  })
+
+  it('starts an interpolated club from a 5 pseudo-shot prior on its point estimates and keeps it marked interpolated', () => {
+    const out = learnedPlayer(two, [{ club: 'b', carry: c.mu_c + 6, total: c.mu_c + 6 + c.mu_r, lateral: 0 }])
+    expect(out.clubs.b.sampled).toBe(false)
+    expect(out.clubs.b.stats?.n).toBe(1)
+    expect(out.clubs.b.mu_c).toBeCloseTo(c.mu_c + 1, 9) // one shot against five pseudo-shots
+    expect(out.clubs.b.mu_r).toBeCloseTo(c.mu_r, 9)
+    expect(out.clubs.b.sigma_theta_deg).toBeLessThan(c.sigma_theta_deg) // a dead straight shot
+    expect(out.clubs.a).toBe(two.clubs.a)
+  })
+
+  it('ignores observations for clubs the player does not carry', () => {
+    expect(learnedPlayer(two, [{ club: 'putter', carry: 1, total: 1, lateral: 0 }])).toBe(two)
   })
 })

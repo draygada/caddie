@@ -11,6 +11,7 @@ import { rampGradientCss } from '../lib/heatmap'
 import { clubDisplayName, MODE_LABEL } from '../lib/tokens'
 import type { Lie, LieName, Meta, Player, XY } from '../lib/types'
 import { useStore } from '../store'
+import { LearnBadge } from './LearnBadge'
 import { LieButtons } from './LieButtons'
 import { PlayItOut } from './PlayItOut'
 import { ShotLogger } from './ShotLogger'
@@ -177,6 +178,7 @@ export function CaddiePanel() {
           </div>
         </div>
         <PlayItOut />
+        <LearnBadge />
       </div>
     </section>
   )
