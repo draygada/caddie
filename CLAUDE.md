@@ -128,8 +128,9 @@ App (branch `part/1x-...`): see `app/CLAUDE.md`.
 | 14 | `docs/parts/14-pwa-gps-deploy.md` | GPS hook, PWA config, Vercel |
 | 15 | `docs/parts/15-course-learning.md` | `learn.ts`, `shotLog.ts`, `ShotLogger.tsx`; `fit --course-log` |
 | 21 | `docs/parts/21-home-modes.md` | `Home.tsx`, `HoleScreen.tsx`; GPS on in Play, absent in Simulate |
+| 22 | `docs/parts/22-aim-target.md` | `aim.ts`, `AimTarget.tsx`, `AimPanel.tsx`; a target the player moves |
 
-Build order: 01, 02, 03, 04, 05, 08 (solver can produce a bundle) then 09, 10, 11, 13 (M1 app) then 06, 07, 12, 14 (online step, evaluation, M2). Hole order: 10, 11, 12. Part 16 (approach benchmark) comes after 07 and before 14. Remaining order: 14, 17, 18, 15, 21, 19, 20 (see `docs/roadmap.md`); part 19 needs the launch monitor export and can start its converter slice as soon as the first export exists.
+Build order: 01, 02, 03, 04, 05, 08 (solver can produce a bundle) then 09, 10, 11, 13 (M1 app) then 06, 07, 12, 14 (online step, evaluation, M2). Hole order: 10, 11, 12. Part 16 (approach benchmark) comes after 07 and before 14. Remaining order: 14, 17, 18, 15, 21, 22, 19, 20 (see `docs/roadmap.md`); part 19 needs the launch monitor export and can start its converter slice as soon as the first export exists.
 
 Repo: https://github.com/draygada/caddie (private). Python 3.12, Node 20. Handicap 15. Driver is always hit off a tee on the simulator; every other club off the mat.
 
