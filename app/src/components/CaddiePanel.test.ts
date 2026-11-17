@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { aimOffsetYd, aimText, distanceToPinM, toYards } from './CaddiePanel'
+import { aimOffsetYd, aimText, distanceToPinM, toYards, lieLine } from './CaddiePanel'
 import { clubDisplayName } from '../lib/tokens'
 import { readToyBundle, toyPlayerDoc } from '../lib/toyFiles'
 
@@ -54,5 +54,19 @@ describe('distanceToPinM', () => {
     const b = readToyBundle()
     expect(distanceToPinM(b.meta, { x: 27.5, y: 2.5 })).toBeCloseTo(45, 9)
     expect(distanceToPinM(b.meta, { x: 27.5, y: 47.5 })).toBe(0)
+  })
+})
+
+describe('lieLine (part 21: the lie is always detected)', () => {
+  it('says where the ball is in plain words for every lie', () => {
+    expect(lieLine(1)).toBe('Ball is on the tee')
+    expect(lieLine(2)).toBe('Ball is in the fairway')
+    expect(lieLine(3)).toBe('Ball is in the rough')
+    expect(lieLine(4)).toBe('Ball is in a bunker')
+    expect(lieLine(5)).toBe('Ball is on the green')
+    expect(lieLine(6)).toBe('Ball is in the water')
+    expect(lieLine(7)).toBe('Ball is out of bounds')
+    expect(lieLine(8)).toBe('Ball is in the trees')
+    expect(lieLine(0)).toBe('Ball is off the hole')
   })
 })

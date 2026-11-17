@@ -1,6 +1,6 @@
 /**
- * The caddie panel: a bottom sheet on a phone (collapsed shows the three numbers and the
- * lie row; expanded adds the aim description and the heatmap legend) and a 360 px column
+ * The caddie panel: a bottom sheet on a phone (collapsed shows the detected lie and the
+ * three numbers; expanded adds the aim description and the heatmap legend) and a 360 px column
  * docked right on wider screens. Reads the store only. The Play it out button lives in
  * PlayItOut (part 13 slices 5 and 6) and mounts in the expanded area.
  */
@@ -12,7 +12,6 @@ import { clubDisplayName, MODE_LABEL } from '../lib/tokens'
 import type { Lie, LieName, Meta, Player, XY } from '../lib/types'
 import { useStore } from '../store'
 import { LearnBadge } from './LearnBadge'
-import { LieButtons } from './LieButtons'
 import { PlayItOut } from './PlayItOut'
 import { ExportLogButton, ShotLogger } from './ShotLogger'
 
@@ -43,6 +42,23 @@ export function aimText(offsetYd: number): string {
   if (n === 0) return 'Aim at the pin'
   const side = offsetYd < 0 ? 'left' : 'right'
   return `Aim ${n} ${n === 1 ? 'yard' : 'yards'} ${side} of the pin`
+}
+
+const LIE_WORDS: Record<Lie, string> = {
+  0: 'off the hole',
+  1: 'on the tee',
+  2: 'in the fairway',
+  3: 'in the rough',
+  4: 'in a bunker',
+  5: 'on the green',
+  6: 'in the water',
+  7: 'out of bounds',
+  8: 'in the trees',
+}
+
+/** The detected lie as one read-only line. Since part 21 the lie is never chosen by hand. */
+export function lieLine(lie: Lie): string {
+  return `Ball is ${LIE_WORDS[lie]}`
 }
 
 function Figure({ label, value, unit, accent }: { label: string; value: string; unit?: string; accent?: boolean }) {
@@ -170,7 +186,11 @@ export function CaddiePanel({ parts = ALL_PARTS, emptyText = 'Tap the map to pla
       </button>
 
       {notice}
-      <LieButtons />
+      {lie !== null && (
+        <p className="num text-caption text-ink-2" data-testid="lie">
+          {lieLine(lie)}
+        </p>
+      )}
       {body}
       {parts.logger && <ShotLogger />}
 
