@@ -244,3 +244,58 @@ def test_report_tables_and_figures_are_written(toy_drop, tmp_path):
     for name in ("0_drop_histograms.png", "0_drop_heatmap_policy.png", "0_drop_disagreement.png"):
         path = figs / name
         assert path.exists() and path.stat().st_size > 5_000, name
+
+
+# --- part 18 slice 2: the part 17 rules in the baselines, and the centre aim ---------------------
+
+
+def test_club_centre_solve_uses_the_centre_policy_direction_in_every_cell(toy_drop):
+    from caddie.value_iteration import state_mask
+
+    _, hole, player = toy_drop
+    playable, _ = state_mask(hole)
+    sol = solve(hole, player, "drop", aim="centre")
+    policy = centre_policy(hole, player)
+    flat = hole.lie.reshape(-1)
+    for cell in np.flatnonzero(playable):
+        r, c = divmod(int(cell), hole.cols)
+        _, want = policy((c + 0.5) * hole.cell_m, (r + 0.5) * hole.cell_m, Lie(int(flat[cell])))
+        assert int(sol.dir[cell]) == want
+
+
+def test_baselines_step_their_aim_off_a_tree():
+    from tests.fixtures.toy_hole import TREE_ROW, toy_player, toy_tree_hole
+
+    hole, player = toy_tree_hole(), toy_player()
+    x, y = 27.5, (TREE_ROW - 1 + 0.5) * hole.cell_m  # right behind the tree row, on the pin line
+    for make in (pin_policy, centre_policy):
+        _, behind = make(hole, player)(x, y, Lie.FAIRWAY)
+        assert behind != DIR0
+        _, clear = make(hole, player)(x, y + 2 * hole.cell_m, Lie.FAIRWAY)
+        assert clear == DIR0
+    strokes = simulate(hole, player, pin_policy(hole, player), "drop", n=500, seed=0)
+    # A 25 m club on a 50 m wide grid can still run out of room going round the row, so a
+    # few plays hit the shot cap; without the clear aim step most of them would.
+    assert np.mean(strokes >= 40) < 0.02
+    assert np.median(strokes) < 8
+
+
+def test_baselines_keep_a_tee_only_club_on_the_tee():
+    from caddie.dispersion import ClubParams, Player
+    from tests.fixtures.toy_hole import toy_hole, toy_player
+
+    hole = toy_hole(hazards=False)
+    hole.lie[0, 4:7] = int(Lie.TEE)
+    base = toy_player()
+    driver = ClubParams(40.0, 4.0, 0.05, 0.05, 2.0, 1.0, sampled=True, stats=None)
+    player = Player(
+        15,
+        {"driver": driver, "test7i": base.clubs["test7i"]},
+        ["driver", "test7i"],
+        base.lie,
+        base.putting,
+    )
+    for make in (pin_policy, centre_policy):
+        policy = make(hole, player)
+        assert policy(hole.tee_xy[0], hole.tee_xy[1], Lie.TEE)[0] == 0
+        assert policy(hole.tee_xy[0], hole.tee_xy[1], Lie.FAIRWAY)[0] == 1

@@ -21,6 +21,7 @@ from caddie.mdp import (
     DIRECTIONS_DEG,
     Lie,
     PenaltyMode,
+    allowed_clubs,
     build_offset_tables,
     make_draws,
     pin_bearing_deg,
@@ -28,7 +29,13 @@ from caddie.mdp import (
     terminal_values,
 )
 from caddie.putting import build_putting_table
-from caddie.value_iteration import NO_ACTION, Solution, solve, write_value_png
+from caddie.value_iteration import (
+    NO_ACTION,
+    Solution,
+    clear_dir_index,
+    solve,
+    write_value_png,
+)
 
 log = logging.getLogger(__name__)
 
@@ -63,19 +70,28 @@ def optimal_policy(solution: Solution, hole: Hole) -> Policy:
     return policy
 
 
+def _clear(hole: Hole, player: Player, x: float, y: float, lie: Lie, club: int, di: int) -> int:
+    """Part 18's clear aim step from the cell under (x, y)."""
+    cell = np.array([_cell_index(hole, x, y)])
+    return int(clear_dir_index(hole, player, cell, np.array([int(lie)]), club, di)[0])
+
+
 def pin_policy(hole: Hole, player: Player) -> Policy:
     """Aim at the pin with the longest club whose mean carry is at most the distance.
 
     When every club carries farther than the pin, the shortest club is used (the part
     file says "the longest club" here, which would hit a driver from ten metres; flagged).
+    Part 18: only clubs allowed from the lie are considered (tee-only clubs, part 17),
+    and the aim steps to the nearest clear direction when trees block the pin line.
     """
     mu = np.array([player.clubs[name].mu_c for name in player.club_order])
 
     def policy(x: float, y: float, lie: Lie) -> tuple[int, int]:
         dist = float(np.hypot(hole.pin_xy[0] - x, hole.pin_xy[1] - y))
-        reach = np.flatnonzero(mu <= dist)
-        club = int(reach[np.argmax(mu[reach])]) if reach.size else int(np.argmin(mu))
-        return club, DIR0
+        ok = np.flatnonzero(allowed_clubs(player, lie))
+        reach = ok[mu[ok] <= dist]
+        club = int(reach[np.argmax(mu[reach])]) if reach.size else int(ok[np.argmin(mu[ok])])
+        return club, _clear(hole, player, x, y, lie, club, DIR0)
 
     return policy
 
@@ -88,17 +104,21 @@ def green_centroid(hole: Hole) -> tuple[float, float]:
 
 
 def centre_policy(hole: Hole, player: Player) -> Policy:
-    """Aim at the green centroid with the club whose mean carry is closest to that distance."""
+    """Aim at the green centroid with the club whose mean carry is closest to that distance.
+
+    Part 18: among the clubs allowed from the lie, with the clear aim step as ``pin_policy``.
+    """
     mu = np.array([player.clubs[name].mu_c for name in player.club_order])
     gx, gy = green_centroid(hole)
 
     def policy(x: float, y: float, lie: Lie) -> tuple[int, int]:
         dist = float(np.hypot(gx - x, gy - y))
-        club = int(np.argmin(np.abs(mu - dist)))
+        ok = np.flatnonzero(allowed_clubs(player, lie))
+        club = int(ok[np.argmin(np.abs(mu[ok] - dist))])
         bearing_centroid = float(np.degrees(np.arctan2(gx - x, gy - y)))
         bearing_pin = float(pin_bearing_deg(hole, np.array([x]), np.array([y]))[0])
         rel = (bearing_centroid - bearing_pin + 180.0) % 360.0 - 180.0
-        return club, _nearest_dir_index(rel)
+        return club, _clear(hole, player, x, y, lie, club, _nearest_dir_index(rel))
 
     return policy
 
