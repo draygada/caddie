@@ -13,7 +13,7 @@ This supersedes the GPS toggle button of part 14 and section 4.1 of `docs/design
 | Screen | For | Has | Does not have |
 | --- | --- | --- | --- |
 | **Home** | Choosing | Two large cards: "Simulate a hole" and "Play with GPS" | A map |
-| **Simulate** | The desk: any hole, any spot | Hole, tee and penalty-mode pickers, heatmap, tap or drag to place the ball, recommendation, aim text, Play it out | GPS, shot logging, the learn switch |
+| **Simulate** | The desk: any hole, any spot | Hole, tee and penalty-mode pickers, tap or drag to place the ball, recommendation, aim text, Play it out | GPS, shot logging, the learn switch |
 | **Play** | The course | GPS always on, accuracy circle, recommendation, Hit and finish buttons, "Ball here?", the learn switch, export | A GPS toggle, Play it out |
 
 - **Home is always the first screen.** `screen` is not persisted. Tapping "Play with GPS" is the user gesture iOS Safari needs before it hands out a position, which is the job the toggle used to do.
@@ -25,6 +25,10 @@ This supersedes the GPS toggle button of part 14 and section 4.1 of `docs/design
 ## The lie is always detected
 
 The lie row of part 11 (Auto, Fairway, Rough, Bunker) is removed from both modes. The lie is always read off the map at the ball, and the panel shows it as one read-only line, "Ball is in the fairway". `lieOverride` stays in the store, always null, so nothing downstream changes; `LieButtons.tsx` is deleted. To correct a wrong lie the player moves the ball. This supersedes slice 5 of part 11 and the lie row in `docs/design.md` section 4.1.
+
+## No heatmap in the app
+
+The strokes-to-go heatmap layer, its toggle button on the map and its legend in the panel are removed from both modes. The map shows the satellite image, the terrain outlines, the ball, the aim and the pin. `lib/heatmap.ts` stays, unused by the app, so the layer can return; the solver still writes its own heatmap figures. This supersedes the heatmap slices of part 10 and `docs/design.md` section 5 for the app.
 
 ## Interfaces
 
