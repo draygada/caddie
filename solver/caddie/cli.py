@@ -10,6 +10,7 @@ hole is the 10 x 10 test fixture and uses its own one-club player.
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
 import time
@@ -18,7 +19,7 @@ from pathlib import Path
 
 import numpy as np
 
-from caddie.dispersion import Player, build_player
+from caddie.dispersion import Player, build_player, fold_course_shots, load_course_log
 from caddie.evaluate import (
     bootstrap_fit,
     evaluate_hole,
@@ -104,6 +105,19 @@ def load_player(label: str, player_path: Path) -> Player | None:
 def cmd_fit(args: argparse.Namespace) -> int:
     putting = build_putting_table(Path(args.putting))
     player = build_player(Path(args.shots), putting, args.handicap)
+    # Part 15: fold exported course logs in after the simulator shots.
+    for path in getattr(args, "course_log", None) or []:
+        label = str(json.loads(Path(path).read_text())["hole"])
+        observations = load_course_log(Path(path), load_hole(label, args), player)
+        learned = sum(len(rows) for rows in observations.values())
+        log.info(
+            "%s: hole %s, %d shots learned from, clubs %s",
+            path,
+            label,
+            learned,
+            sorted(observations),
+        )
+        player = fold_course_shots(player, observations)
     write_player(player, Path(args.out))
     return 0
 
@@ -409,7 +423,15 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="python -m caddie", description=__doc__)
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    s = sub.add_parser("fit", parents=[common, fit_opts], help="fit player.json from shots")
+    s = sub.add_parser(
+        "fit", parents=[common, fit_opts, hole_io], help="fit player.json from shots"
+    )
+    s.add_argument(
+        "--course-log",
+        type=Path,
+        action="append",
+        help="a shot log exported from the app; repeat for more (part 15)",
+    )
     s.set_defaults(func=cmd_fit)
 
     s = sub.add_parser("hole", parents=[common, hole_io], help="build a hole and its lie png")

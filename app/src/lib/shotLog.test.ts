@@ -1,9 +1,22 @@
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
 import { describe, expect, it } from 'vitest'
 
-import { updateClubStats } from './learn'
-import { type LoggedShot, MAX_AIM_CHANGE_DEG, MAX_LEARN_ACCURACY_M, skipReason, toObservation } from './shotLog'
+import { learnedPlayer, updateClubStats } from './learn'
+import {
+  exportFileName,
+  exportLog,
+  type LoggedShot,
+  MAX_AIM_CHANGE_DEG,
+  MAX_LEARN_ACCURACY_M,
+  skipReason,
+  toObservation,
+} from './shotLog'
 import { testBundle } from './testBundle'
-import type { HoleBundle, Player } from './types'
+import { readToyBundle } from './toyFiles'
+import type { ClubParams, ClubStats, HoleBundle, Player } from './types'
 
 /** A 50 m wide, 250 m long strip: fairway, with a rough column on the right and a green row at the far end. */
 function strip(): HoleBundle {
@@ -119,5 +132,76 @@ describe('toObservation', () => {
   it('skips a shot too short to leave a carry after the mean roll, or one that went backwards', () => {
     expect(skipReason(b, player, shot({ end: { x: 22.5, y: 17.5 } }))).toBe('short')
     expect(skipReason(b, player, shot({ end: { x: 22.5, y: 2.5 } }))).toBe('short')
+  })
+})
+
+// --- slice 7: parity with the solver's load_course_log and fold_course_shots -------------------
+
+interface CourseFixture {
+  player: Player
+  log: { version: number; hole: string; shots: LoggedShot[] }
+  skipped: Record<string, string>
+  observations: Record<string, [number, number, number][]>
+  after: Record<string, ClubStats>
+  learned: Record<string, ClubParams>
+}
+
+const COURSE = JSON.parse(
+  readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'docs', 'fixtures', 'course_log.json'), 'utf8'),
+) as CourseFixture
+
+describe('docs/fixtures/course_log.json: 20 synthetic shots, Python and TypeScript agree', () => {
+  const toy = readToyBundle()
+  const { player, log } = COURSE
+
+  it('skips the same shots for the same reasons', () => {
+    expect(log.shots).toHaveLength(20)
+    log.shots.forEach((s, k) => expect(skipReason(toy, player, s) ?? undefined).toBe(COURSE.skipped[String(k)]))
+  })
+
+  it('gives the same observations to 1e-9', () => {
+    const got: Record<string, [number, number, number][]> = {}
+    for (const s of log.shots) {
+      const o = toObservation(toy, player, s)
+      if (o) (got[o.club] ??= []).push([o.carry, o.total, o.lateral])
+    }
+    expect(Object.keys(got).sort()).toEqual(Object.keys(COURSE.observations).sort())
+    for (const [club, rows] of Object.entries(COURSE.observations)) {
+      expect(got[club]).toHaveLength(rows.length)
+      rows.forEach((row, k) => row.forEach((v, j) => expect(Math.abs(got[club][k][j] - v)).toBeLessThan(1e-9)))
+    }
+  })
+
+  it('moves the posterior the same amount, and only for the clubs hit', () => {
+    const obs = log.shots.map((s) => toObservation(toy, player, s)).filter((o) => o !== null)
+    const learned = learnedPlayer(player, obs)
+    for (const [club, want] of Object.entries(COURSE.after)) {
+      const got = learned.clubs[club].stats
+      if (!got) throw new Error(`${club} has no stats`)
+      expect(got.n).toBe(want.n)
+      for (const k of ['m', 'kappa', 'alpha', 'beta'] as const) {
+        expect(Math.abs(got.carry[k] - want.carry[k])).toBeLessThan(1e-9)
+        expect(Math.abs(got.roll[k] - want.roll[k])).toBeLessThan(1e-9)
+      }
+      expect(Math.abs(got.theta.beta - want.theta.beta)).toBeLessThan(1e-9)
+      for (const k of ['mu_c', 'sigma_theta_deg', 'sigma_d', 'p', 'mu_r', 'sigma_r'] as const)
+        expect(Math.abs(learned.clubs[club][k] - COURSE.learned[club][k])).toBeLessThan(1e-9)
+      expect(learned.clubs[club].sampled).toBe(COURSE.learned[club].sampled)
+    }
+    const changed = player.club_order.filter((c) => learned.clubs[c] !== player.clubs[c])
+    expect(changed.sort()).toEqual(Object.keys(COURSE.after).sort())
+    expect(learned.clubs.test5i).toBe(player.clubs.test5i)
+  })
+})
+
+describe('exportLog', () => {
+  it('is a JSON download the solver can read back: version, hole and the shots as logged', async () => {
+    const blob = exportLog(COURSE.log.shots, 'toy')
+    expect(blob.type).toBe('application/json')
+    expect(JSON.parse(await blob.text())).toEqual(COURSE.log)
+  })
+
+  it('names the file by round', () => {
+    expect(exportFileName('2026-11-17:11')).toBe('caddie-log-2026-11-17-hole-11.json')
   })
 })

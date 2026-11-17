@@ -14,7 +14,7 @@ import { useStore } from '../store'
 import { LearnBadge } from './LearnBadge'
 import { LieButtons } from './LieButtons'
 import { PlayItOut } from './PlayItOut'
-import { ShotLogger } from './ShotLogger'
+import { ExportLogButton, ShotLogger } from './ShotLogger'
 
 export const M_PER_YD = 0.9144
 
@@ -179,6 +179,7 @@ export function CaddiePanel() {
         </div>
         <PlayItOut />
         <LearnBadge />
+        <ExportLogButton />
       </div>
     </section>
   )

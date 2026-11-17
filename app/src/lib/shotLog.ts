@@ -102,3 +102,16 @@ export function logKey(t: number, hole: number | string): string {
   const pad = (n: number) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}:${hole}`
 }
+
+export const LOG_VERSION = 1
+
+/** The round as a JSON download: what the solver's `fit --course-log` reads. */
+export function exportLog(log: LoggedShot[], hole: number | string = 'toy'): Blob {
+  return new Blob([JSON.stringify({ version: LOG_VERSION, hole: String(hole), shots: log })], { type: 'application/json' })
+}
+
+/** `caddie-log-2026-11-17-hole-11.json` for the round keyed `2026-11-17:11`. */
+export function exportFileName(key: string): string {
+  const [date, hole] = key.split(':')
+  return `caddie-log-${date}-hole-${hole}.json`
+}

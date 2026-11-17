@@ -12,7 +12,7 @@ import { lieAt } from '../lib/grid'
 import { whenStyleReady } from '../lib/mapReady'
 import { TEE_ONLY_CLUBS } from '../lib/rollout'
 import type { LoggedShot } from '../lib/shotLog'
-import { logKey } from '../lib/shotLog'
+import { exportFileName, exportLog, logKey } from '../lib/shotLog'
 import { clubDisplayName, token } from '../lib/tokens'
 import type { Lie, Meta, Player, XY } from '../lib/types'
 import { activeLog, useStore } from '../store'
@@ -152,6 +152,30 @@ export function ShotLogger() {
         </div>
       )}
     </div>
+  )
+}
+
+/** Download the round being played as JSON, for `fit --course-log` (part 15 slice 7). */
+export function ExportLogButton() {
+  const hole = useStore((s) => s.hole)
+  const log = useStore((s) => activeLog(s))
+  if (log.length === 0) return null
+  const download = () => {
+    const url = URL.createObjectURL(exportLog(log, hole))
+    const a = document.createElement('a')
+    a.href = url
+    a.download = exportFileName(logKey(log[0].t, hole))
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+  return (
+    <button
+      type="button"
+      className="flex h-12 items-center justify-center rounded-lg border border-line bg-surface-2 px-3 text-body text-ink"
+      onClick={download}
+    >
+      Export {log.length} {log.length === 1 ? 'shot' : 'shots'}
+    </button>
   )
 }
 
