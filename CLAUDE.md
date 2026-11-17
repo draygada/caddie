@@ -33,7 +33,7 @@ Read this file, then the CLAUDE.md of the half you are working in (`solver/CLAUD
 | Penalties | `penalty_mode` in {mulligan, drop, replay}. mulligan: rehit from origin, +0. drop: nearest fairway cell on the entry side, +1. replay: from origin, +1. One solve per mode. |
 | Solver | Value iteration, gamma = 1, K = 200 fixed Halton draws per club shared across sweeps, stop at residual < 0.01. |
 | Online | Rollout lookahead at a continuous point, m = 100 draws per action, leaf = bilinear interpolation of the value grid. Python in M1, TS Web Worker in M2. |
-| Evaluation | 2,000 simulated plays per hole per policy. Policies: optimal, pin-longest-club, centre-of-green. Bootstrap the fit 50 times. |
+| Evaluation | 2,000 simulated plays per hole per policy. Policies: optimal, pin-longest-club, centre-of-green, and the club-only solves `club_pin` and `club_centre` (part 18). Every baseline obeys the tee-only driver and steps its aim to the nearest clear direction when trees block it. Bootstrap the fit 50 times. |
 | Benchmark | Approaches compared on fixed cases with stated expectations (part 16): grid, rollout, pin, centre, greedy, risk (exponential utility, lambda 0.5), sparse sampling depth 2, MCTS. Paired draws, ranked by mean regret, cell and point simulators. A failed expectation is reported, not a test failure. |
 | Output | Per hole per mode: `meta.json, lie.u8, value.f32, club.u8, dir.u8`. |
 | Tee and pin | Grid origin and rotation are fixed at the Black tee; the player may choose any tee box in the app (the value grid does not depend on where you start). Pin fixed at the green centroid. |
