@@ -1,18 +1,16 @@
 /**
- * The caddie panel: a bottom sheet on a phone (collapsed shows the three numbers and the
- * lie row; expanded adds the aim description and the heatmap legend) and a 360 px column
+ * The caddie panel: a bottom sheet on a phone (collapsed shows the detected lie and the
+ * three numbers; expanded adds the aim description) and a 360 px column
  * docked right on wider screens. Reads the store only. The Play it out button lives in
  * PlayItOut (part 13 slices 5 and 6) and mounts in the expanded area.
  */
-import { useState } from 'react'
+import { type ReactNode, useState } from 'react'
 
 import { lieAt, valueNearest } from '../lib/grid'
-import { rampGradientCss } from '../lib/heatmap'
 import { clubDisplayName, MODE_LABEL } from '../lib/tokens'
 import type { Lie, LieName, Meta, Player, XY } from '../lib/types'
 import { useStore } from '../store'
 import { LearnBadge } from './LearnBadge'
-import { LieButtons } from './LieButtons'
 import { PlayItOut } from './PlayItOut'
 import { ExportLogButton, ShotLogger } from './ShotLogger'
 
@@ -45,6 +43,23 @@ export function aimText(offsetYd: number): string {
   return `Aim ${n} ${n === 1 ? 'yard' : 'yards'} ${side} of the pin`
 }
 
+const LIE_WORDS: Record<Lie, string> = {
+  0: 'off the hole',
+  1: 'on the tee',
+  2: 'in the fairway',
+  3: 'in the rough',
+  4: 'in a bunker',
+  5: 'on the green',
+  6: 'in the water',
+  7: 'out of bounds',
+  8: 'in the trees',
+}
+
+/** The detected lie as one read-only line. Since part 21 the lie is never chosen by hand. */
+export function lieLine(lie: Lie): string {
+  return `Ball is ${LIE_WORDS[lie]}`
+}
+
 function Figure({ label, value, unit, accent }: { label: string; value: string; unit?: string; accent?: boolean }) {
   return (
     <div className="flex min-w-0 flex-col gap-1">
@@ -73,7 +88,22 @@ function Skeleton() {
   )
 }
 
-export function CaddiePanel() {
+export interface CaddiePanelProps {
+  /** Part 21: which controls this mode carries (`panelParts` in HoleScreen). All on by default. */
+  parts?: { logger: boolean; learn: boolean; playItOut: boolean }
+  /** What to say before there is a ball. */
+  emptyText?: string
+  /** Shown first in the panel: the GPS notice in Play, a hole that failed to load. */
+  notice?: ReactNode
+  /** The read-only hole line: "Hole 11 · Par 4 · 342 yd · Black tees". */
+  info?: string
+  /** Last in the expanded panel: Next hole and End round. */
+  footer?: ReactNode
+}
+
+const ALL_PARTS = { logger: true, learn: true, playItOut: true }
+
+export function CaddiePanel({ parts = ALL_PARTS, emptyText = 'Tap the map to place the ball', notice, info, footer }: CaddiePanelProps) {
   const recommendation = useStore((s) => s.recommendation)
   const ball = useStore((s) => s.ball)
   const bundle = useStore((s) => s.bundle)
@@ -94,7 +124,7 @@ export function CaddiePanel() {
   if (!bundle) {
     body = <Skeleton />
   } else if (!ball) {
-    body = <p className="text-body text-ink-2">Tap the map or turn on GPS</p>
+    body = <p className="text-body text-ink-2">{emptyText}</p>
   } else if (onGreen && putts !== null) {
     body = (
       <div className="grid grid-cols-3 gap-4">
@@ -140,7 +170,6 @@ export function CaddiePanel() {
     body = <p className="text-body text-ink-2">No shot from here: off the hole.</p>
   }
 
-  const par = bundle?.meta.par ?? 4
 
   return (
     <section
@@ -158,9 +187,23 @@ export function CaddiePanel() {
         <span className="sr-only">{expanded ? 'Show less' : 'Show more'}</span>
       </button>
 
-      <LieButtons />
+      {notice}
+      {(info || lie !== null) && (
+        <div className="flex flex-col gap-0.5">
+          {info && (
+            <p className="num text-caption font-medium text-ink" data-testid="hole-line">
+              {info}
+            </p>
+          )}
+          {lie !== null && (
+            <p className="num text-caption text-ink-2" data-testid="lie">
+              {lieLine(lie)}
+            </p>
+          )}
+        </div>
+      )}
       {body}
-      <ShotLogger />
+      {parts.logger && <ShotLogger />}
 
       <div id="caddie-details" className={`${expanded ? 'flex' : 'hidden'} flex-col gap-3 pb-2 md:flex`}>
         {recommendation && offsetYd !== null && (
@@ -168,18 +211,10 @@ export function CaddiePanel() {
             {aimText(offsetYd)}
           </p>
         )}
-        <div className="flex flex-col gap-1">
-          <span className="label">Strokes to go</span>
-          <div className="h-3 w-full rounded" style={{ background: rampGradientCss() }} aria-hidden="true" />
-          <div className="num flex justify-between text-caption text-ink-2">
-            <span>{par - 1}</span>
-            <span>par {par}</span>
-            <span>{par + 3}</span>
-          </div>
-        </div>
-        <PlayItOut />
-        <LearnBadge />
-        <ExportLogButton />
+        {parts.playItOut && <PlayItOut />}
+        {parts.learn && <LearnBadge />}
+        {parts.learn && <ExportLogButton />}
+        {footer}
       </div>
     </section>
   )

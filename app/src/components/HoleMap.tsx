@@ -1,13 +1,12 @@
 /**
- * Satellite map of the hole with the strokes-to-go heatmap and the hole polygons.
+ * Satellite map of the hole with the hole polygons. The strokes-to-go heatmap was removed
+ * from the app in part 21.
  * Until the store exists (part 11) the bundle comes in as a prop from App.
  */
 import {
   AttributionControl,
-  type ImageSource,
   type ExpressionSpecification,
   type GeoJSONSource,
-  LngLatBounds,
   Map as MLMap,
   NavigationControl,
   setWorkerUrl,
@@ -20,13 +19,12 @@ import { type ReactNode, useEffect, useRef, useState } from 'react'
 
 import { AimArrow } from './AimArrow'
 import { BallMarker } from './BallMarker'
-import { GpsBadge } from './GpsBadge'
+import { GpsLayer } from './GpsBadge'
 import { MapLabels } from './MapLabels'
 import { PlayItOutLayer } from './PlayItOut'
 import { ShotLogLayer } from './ShotLogger'
 
-import { gridCorners, gridToLonLat } from '../lib/geo'
-import { heatmapDataUrl } from '../lib/heatmap'
+import { frameZoom, gridToLonLat, holeFrame } from '../lib/geo'
 import { whenStyleReady } from '../lib/mapReady'
 import { token } from '../lib/tokens'
 import type { HoleBundle, Meta, XY } from '../lib/types'
@@ -35,33 +33,49 @@ export const ESRI_TILES =
   'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
 export const ESRI_ATTRIBUTION = 'Esri, Maxar, Earthstar Geographics'
 export const MAX_ZOOM = 19
-export const HEAT_OPACITY = 0.55
 export const FIT_PADDING_PX = 24
 
-/** Collapsed bottom sheet height on a phone, so the fit keeps the hole above it. */
+/** Fallback for the bottom sheet height on a phone, used until the sheet has rendered. */
 export const SHEET_PADDING_PX = 270
-export const TOP_BAR_PADDING_PX = 88
+/** Room at the top for the map button and the attribution; there is no top bar since part 21. */
+export const TOP_BAR_PADDING_PX = 40
 
 function isPhone(): boolean {
   return typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches
 }
 
-/** Padding that keeps the fitted grid clear of the floating top bar, the map buttons and the sheet. */
+/** Height of the bottom sheet as it is on screen now, or the fallback before it has rendered. */
+function sheetHeightPx(): number {
+  if (typeof document === 'undefined') return SHEET_PADDING_PX
+  let h = 0
+  for (const el of document.querySelectorAll('section[aria-label="Caddie"]')) h = Math.max(h, el.getBoundingClientRect().height)
+  return h > 0 ? h + FIT_PADDING_PX : SHEET_PADDING_PX
+}
+
+/** Padding that keeps the fitted hole clear of the map button and the sheet. */
 export function fitPadding(): { top: number; bottom: number; left: number; right: number } {
   return {
     top: TOP_BAR_PADDING_PX,
-    bottom: isPhone() ? SHEET_PADDING_PX : FIT_PADDING_PX,
+    bottom: isPhone() ? sheetHeightPx() : FIT_PADDING_PX,
     left: FIT_PADDING_PX,
     right: FIT_PADDING_PX,
   }
 }
 
-/** Bearing = hole bearing, so +y points up the screen, then fit the rotated grid. */
+/**
+ * Bearing = hole bearing, so +y points up the screen, then fit the hole itself (tees, fairway,
+ * green and pin with a margin), not the whole grid with its wide rough margins.
+ */
 export function fitToGrid(map: MLMap, meta: Meta): void {
-  const bounds = new LngLatBounds()
-  for (const [lon, lat] of gridCorners(meta)) bounds.extend([lon, lat])
-  map.setBearing(meta.rotation_deg)
-  map.fitBounds(bounds, { padding: fitPadding(), bearing: meta.rotation_deg, duration: 0 })
+  const f = holeFrame(meta)
+  const padding = fitPadding()
+  const box = map.getContainer()
+  const availW = box.clientWidth - padding.left - padding.right
+  const availH = box.clientHeight - padding.top - padding.bottom
+  const { lon, lat } = gridToLonLat(meta, { x: (f.x0 + f.x1) / 2, y: (f.y0 + f.y1) / 2 })
+  const zoom = Math.min(MAX_ZOOM, frameZoom(f.x1 - f.x0, f.y1 - f.y0, availW, availH, lat))
+  // `padding` puts the centre in the middle of the space the top bar and the sheet leave free.
+  map.jumpTo({ center: [lon, lat], zoom, bearing: meta.rotation_deg, padding })
 }
 
 /** Polygon kinds in draw order; colours come from the --t-* tokens (docs/design.md). */
@@ -69,7 +83,7 @@ const POLYGON_KINDS = ['fairway', 'rough', 'green', 'bunker', 'water', 'ob', 'te
 export function lieColours(): Record<string, string> {
   return Object.fromEntries(POLYGON_KINDS.map((k) => [k, token(`--t-${k}`)]))
 }
-/** Terrain fills never exceed 35 percent; 25 keeps fairway edges legible over the heatmap. */
+/** Terrain fills never exceed 35 percent; 25 keeps fairway edges legible. */
 export const TERRAIN_FILL_OPACITY = 0.25
 
 type Feature = GJFeature<Geometry, { kind: string }>
@@ -134,15 +148,6 @@ const STYLE: StyleSpecification = {
   layers: [{ id: 'esri', type: 'raster', source: 'esri' }],
 }
 
-const HEAT_KEY = 'caddie.heat'
-function readHeatOn(): boolean {
-  try {
-    return localStorage.getItem(HEAT_KEY) !== 'off'
-  } catch {
-    return true
-  }
-}
-
 /** 48 px map button on the panel surface; `pressed` fills it for a toggle that is on. */
 function MapButton({
   label,
@@ -174,14 +179,17 @@ function MapButton({
 export interface HoleMapProps {
   bundle: HoleBundle | null
   tee: string
+  /** Part 21: which layers this mode carries. */
+  parts?: { logger: boolean; playItOut: boolean; gps: boolean }
 }
 
-export function HoleMap({ bundle, tee }: HoleMapProps) {
+const ALL_PARTS = { logger: true, playItOut: true, gps: true }
+
+export function HoleMap({ bundle, tee, parts = ALL_PARTS }: HoleMapProps) {
   const container = useRef<HTMLDivElement>(null)
   const mapRef = useRef<MLMap | null>(null)
   const [map, setMap] = useState<MLMap | null>(null)
   const teeRef = useRef(tee)
-  const [heatOn, setHeatOn] = useState<boolean>(readHeatOn)
 
   // Mount once.
   useEffect(() => {
@@ -196,7 +204,7 @@ export function HoleMap({ bundle, tee }: HoleMapProps) {
     })
     // bottom-right: a mouse affordance; hidden under 768 px where the user pinches
     map.addControl(new NavigationControl({ showCompass: false }), 'bottom-right')
-    // top-left under the floating top bar, so the bottom sheet never covers it on a phone
+    // top-left, so the bottom sheet never covers it on a phone
     map.addControl(new AttributionControl({ compact: true }), 'top-left')
     mapRef.current = map
     setMap(map)
@@ -207,25 +215,11 @@ export function HoleMap({ bundle, tee }: HoleMapProps) {
     }
   }, [])
 
-  // Heatmap image source: added once, then updated in place on bundle change.
+  // Terrain outlines and the tee and pin marks: added once, then updated on bundle change.
   useEffect(() => {
     const map = mapRef.current
     if (!map || !bundle) return
     const apply = () => {
-      const url = heatmapDataUrl(bundle)
-      const coordinates = gridCorners(bundle.meta)
-      const heat = map.getSource('heat') as ImageSource | undefined
-      if (heat) {
-        heat.updateImage({ url, coordinates })
-      } else {
-        map.addSource('heat', { type: 'image', url, coordinates })
-        map.addLayer({
-          id: 'heat',
-          type: 'raster',
-          source: 'heat',
-          paint: { 'raster-opacity': HEAT_OPACITY, 'raster-resampling': 'nearest' },
-        })
-      }
       const polys = polygonFeatures(bundle.meta)
       const polySource = map.getSource('polys') as GeoJSONSource | undefined
       if (polySource) {
@@ -265,20 +259,6 @@ export function HoleMap({ bundle, tee }: HoleMapProps) {
     return whenStyleReady(map, apply)
   }, [bundle])
 
-  // Heatmap on or off: remembered per device (docs/design.md section 9).
-  useEffect(() => {
-    try {
-      localStorage.setItem(HEAT_KEY, heatOn ? 'on' : 'off')
-    } catch {
-      /* private mode */
-    }
-    const map = mapRef.current
-    if (!map) return
-    return whenStyleReady(map, () => {
-      if (map.getLayer('heat')) map.setLayoutProperty('heat', 'visibility', heatOn ? 'visible' : 'none')
-    })
-  }, [heatOn, bundle])
-
   // Pin and the selected tee.
   useEffect(() => {
     teeRef.current = tee
@@ -295,28 +275,17 @@ export function HoleMap({ bundle, tee }: HoleMapProps) {
     <div ref={container} className="h-full w-full">
       {map && <BallMarker map={map} />}
       {map && <AimArrow map={map} />}
-      {map && <PlayItOutLayer map={map} />}
-      {map && <ShotLogLayer map={map} />}
+      {map && parts.playItOut && <PlayItOutLayer map={map} />}
+      {map && parts.logger && <ShotLogLayer map={map} />}
+      {map && parts.gps && <GpsLayer map={map} />}
       {map && <MapLabels map={map} />}
-      <div className="absolute top-16 right-2 z-10 flex flex-col gap-2 safe-top">
-        <MapButton
-          label={heatOn ? 'Hide strokes-to-go heatmap' : 'Show strokes-to-go heatmap'}
-          pressed={heatOn}
-          onClick={() => setHeatOn((v) => !v)}
-        >
-          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" aria-hidden="true">
-            <path d="M12 3 2 8l10 5 10-5-10-5Z" />
-            <path d="m2 12 10 5 10-5" />
-            <path d="m2 16 10 5 10-5" />
-          </svg>
-        </MapButton>
+      <div className="absolute top-2 right-2 z-10 flex flex-col gap-2 safe-top">
         <MapButton label="Recenter on the hole" onClick={() => bundle && map && fitToGrid(map, bundle.meta)}>
           <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
             <circle cx="12" cy="12" r="7" />
             <path d="M12 2v4M12 18v4M2 12h4M18 12h4" />
           </svg>
         </MapButton>
-        {map && <GpsBadge map={map} />}
       </div>
     </div>
   )

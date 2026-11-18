@@ -186,3 +186,21 @@ describe('follow rule', () => {
     stop()
   })
 })
+
+describe('try again (part 21)', () => {
+  it('stopping and starting again opens a new watch and clears the error', () => {
+    const f = fakeGeo()
+    let watches = 0
+    const geo: GeoLike = { ...f.geo, watchPosition: (s, e, o) => ((watches += 1), f.geo.watchPosition(s, e, o)) }
+    const stop = startGps(geo)
+    f.fail('User denied Geolocation')
+    expect(useGpsStatus.getState().error).toBe('User denied Geolocation')
+    stop()
+    const stopAgain = startGps(geo)
+    expect(watches).toBe(2)
+    expect(useGpsStatus.getState()).toEqual({ enabled: true, error: null, outside: false })
+    f.fix({ x: 22, y: 13 })
+    expect(gpsNow().x).toBeCloseTo(22, 3)
+    stopAgain()
+  })
+})
