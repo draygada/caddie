@@ -202,3 +202,28 @@ describe('persistence', () => {
     expect(log()).toHaveLength(1)
   })
 })
+
+describe('part 22: Hit logs the aim in force, and "Ball is here" confirms the finish', () => {
+  beforeEach(() => useStore.getState().setBall({ x: 27.5, y: 2.5 }))
+
+  it('with a moved target the shot carries the player\'s aim and the caddie\'s as recAimDeg', () => {
+    const rec = useStore.getState().recommendation
+    if (!rec) throw new Error('no recommendation')
+    useStore.getState().setTarget({ x: 37.5, y: 12.5 }) // 45 degrees right of straight up
+    useStore.getState().hitShot(undefined, T0)
+    const [shot] = log()
+    expect(shot.aimDeg).toBeCloseTo(45, 6)
+    expect(shot.recAimDeg).toBeCloseTo(pinBearingDeg(readToyBundle(), { x: 27.5, y: 2.5 }) + rec.dir_deg, 9)
+    expect(shot.club).toBe(rec.club) // the toy bag has one club
+  })
+
+  it('"Ball is here" closes the open shot where the ball is, as a normal shot, and starts nothing', () => {
+    useStore.getState().hitShot(undefined, T0)
+    useStore.getState().setBall({ x: 30, y: 24 })
+    useStore.getState().finishShot('normal', T0 + 1)
+    expect(log()).toHaveLength(1)
+    expect(log()[0].end).toEqual({ x: 30, y: 24 })
+    expect(log()[0].outcome).toBe('normal')
+    expect(log()[0].endLie).toBe(2)
+  })
+})

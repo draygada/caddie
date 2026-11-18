@@ -23,7 +23,7 @@ import {
 } from '../lib/simulate'
 import { token } from '../lib/tokens'
 import type { Meta } from '../lib/types'
-import { useStore } from '../store'
+import { currentAim, useStore } from '../store'
 
 export const HISTOGRAM_RUNS = 1000
 /** The path is ink on the photo; the hopping marker is the ball colour. Never --rec. */
@@ -80,7 +80,10 @@ export function startPlay(): void {
   if (!bundle || !player || !ball) return
   const lie = lieOverride ?? lieAt(bundle, ball)
   const seed = (Date.now() % 2147483647) >>> 0
-  const result = playOut(bundle, player, ball, lie, mode, mulberry32(seed))
+  // Part 22: the first shot is the aim in force, the player's own if they moved the target.
+  const aim = currentAim(useStore.getState())
+  const first = aim ? { club: aim.club, dir_deg: aim.dir_deg } : undefined
+  const result = playOut(bundle, player, ball, lie, mode, mulberry32(seed), first)
   setPlayState({ shots: result.shots, strokes: result.strokes, startedAt: performance.now(), finishedAt: null, histogram: null })
 }
 
@@ -89,7 +92,9 @@ function finishPlay(): void {
   let h: Map<number, number> | null = null
   if (bundle && player && ball) {
     const lie = lieOverride ?? lieAt(bundle, ball)
-    if (lie >= 1 && lie <= 5) h = histogram(bundle, player, ball, lie, mode, HISTOGRAM_RUNS, 7)
+    const aim = currentAim(useStore.getState())
+    const first = aim ? { club: aim.club, dir_deg: aim.dir_deg } : undefined
+    if (lie >= 1 && lie <= 5) h = histogram(bundle, player, ball, lie, mode, HISTOGRAM_RUNS, 7, first)
   }
   setPlayState({ ...state, finishedAt: performance.now(), histogram: h })
 }

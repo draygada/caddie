@@ -17,10 +17,10 @@ import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url'
 import type { Feature as GJFeature, FeatureCollection, Geometry } from 'geojson'
 import { type ReactNode, useEffect, useRef, useState } from 'react'
 
-import { AimArrow } from './AimArrow'
+import { useStore } from '../store'
+import { AimTarget } from './AimTarget'
 import { BallMarker } from './BallMarker'
 import { GpsLayer } from './GpsBadge'
-import { MapLabels } from './MapLabels'
 import { PlayItOutLayer } from './PlayItOut'
 import { ShotLogLayer } from './ShotLogger'
 
@@ -38,6 +38,7 @@ export const FIT_PADDING_PX = 24
 /** Fallback for the bottom sheet height on a phone, used until the sheet has rendered. */
 export const SHEET_PADDING_PX = 270
 /** Room at the top for the map button and the attribution; there is no top bar since part 21. */
+export const MAX_SHEET_SHARE = 0.5
 export const TOP_BAR_PADDING_PX = 40
 
 function isPhone(): boolean {
@@ -49,7 +50,8 @@ function sheetHeightPx(): number {
   if (typeof document === 'undefined') return SHEET_PADDING_PX
   let h = 0
   for (const el of document.querySelectorAll('section[aria-label="Caddie"]')) h = Math.max(h, el.getBoundingClientRect().height)
-  return h > 0 ? h + FIT_PADDING_PX : SHEET_PADDING_PX
+  // Never give the sheet more than half the screen: past that the hole would be a thumbnail.
+  return h > 0 ? Math.min(h + FIT_PADDING_PX, window.innerHeight * MAX_SHEET_SHARE) : SHEET_PADDING_PX
 }
 
 /** Padding that keeps the fitted hole clear of the map button and the sheet. */
@@ -259,6 +261,16 @@ export function HoleMap({ bundle, tee, parts = ALL_PARTS }: HoleMapProps) {
     return whenStyleReady(map, apply)
   }, [bundle])
 
+  // The panel grows once there is a ball to advise on; frame the hole again above its new
+  // height, so the ball is never left hidden behind it.
+  const hasBall = useStore((st) => st.ball !== null)
+  useEffect(() => {
+    const m = mapRef.current
+    if (!m || !bundle || !hasBall) return
+    const id = requestAnimationFrame(() => fitToGrid(m, bundle.meta))
+    return () => cancelAnimationFrame(id)
+  }, [bundle, hasBall])
+
   // Pin and the selected tee.
   useEffect(() => {
     teeRef.current = tee
@@ -274,11 +286,10 @@ export function HoleMap({ bundle, tee, parts = ALL_PARTS }: HoleMapProps) {
   return (
     <div ref={container} className="h-full w-full">
       {map && <BallMarker map={map} />}
-      {map && <AimArrow map={map} />}
+      {map && <AimTarget map={map} />}
       {map && parts.playItOut && <PlayItOutLayer map={map} />}
       {map && parts.logger && <ShotLogLayer map={map} />}
       {map && parts.gps && <GpsLayer map={map} />}
-      {map && <MapLabels map={map} />}
       <div className="absolute top-2 right-2 z-10 flex flex-col gap-2 safe-top">
         <MapButton label="Recenter on the hole" onClick={() => bundle && map && fitToGrid(map, bundle.meta)}>
           <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">

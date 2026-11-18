@@ -22,6 +22,8 @@ export function BallMarker({ map }: { map: MLMap }) {
   const ball = useStore((s) => s.ball)
   const setBall = useStore((s) => s.setBall)
   const gps = useStore((s) => s.gps)
+  // Part 22: in Simulate the ball stays on the tee; in Play a drag corrects the GPS fix.
+  const draggable = useStore((s) => s.screen === 'play')
   const markerRef = useRef<Marker | null>(null)
   const lastDragRef = useRef(0)
   // Latest bundle and ball for the dragend handler, which is bound once per marker.
@@ -30,12 +32,16 @@ export function BallMarker({ map }: { map: MLMap }) {
   bundleRef.current = bundle ?? bundleRef.current
   ballRef.current = ball
 
-  // Click on the map sets the ball; clicks outside the grid are ignored.
+  // A tap on the map moves the aim target; taps outside the grid are ignored.
   useEffect(() => {
     if (!bundle) return
     const onClick = (e: MapMouseEvent) => {
       const p = lonLatToGrid(bundle.meta, e.lngLat.lng, e.lngLat.lat)
-      if (insideGrid(bundle.meta, p)) setBall(p)
+      if (!insideGrid(bundle.meta, p)) return
+      // Part 22: a tap aims. It only places the ball when there is none yet (Play before a fix).
+      const { ball: at, setTarget } = useStore.getState()
+      if (at) setTarget(p)
+      else setBall(p)
     }
     map.on('click', onClick)
     return () => {
@@ -53,7 +59,7 @@ export function BallMarker({ map }: { map: MLMap }) {
     const { lon, lat } = gridToLonLat(bundle.meta, ball)
     if (!markerRef.current) {
       const marker = new Marker({ color: token('--ball'), draggable: true }).setLngLat([lon, lat]).addTo(map)
-      marker.getElement().setAttribute('aria-label', 'Ball, drag to move')
+      marker.getElement().setAttribute('aria-label', 'Ball')
       // `drag` fires continuously; only the end of a drag writes the store.
       marker.on('dragend', () => {
         const meta = bundleRef.current?.meta
@@ -76,6 +82,10 @@ export function BallMarker({ map }: { map: MLMap }) {
     if (Date.now() - lastDragRef.current < GPS_HOLD_MS) return
     setBall({ x: gps.x, y: gps.y })
   }, [gps, bundle, setBall])
+
+  useEffect(() => {
+    markerRef.current?.setDraggable(draggable)
+  }, [draggable, ball])
 
   useEffect(
     () => () => {

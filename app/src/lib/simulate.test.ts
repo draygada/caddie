@@ -14,6 +14,7 @@ import {
   type Shot,
 } from './simulate'
 import { readToyBundle, toyPlayerDoc } from './toyFiles'
+import type { Lie } from './types'
 
 const b = readToyBundle()
 const player = toyPlayerDoc()
@@ -157,5 +158,29 @@ describe('histogram bins and blow-up (slice 6)', () => {
 
   it('histogramMean averages the counts', () => {
     expect(histogramMean(h)).toBeCloseTo((20 + 600 + 1600 + 1250 + 540 + 210 + 120 + 55) / 1000, 9)
+  })
+})
+
+describe('playOut from the player\'s own first shot (part 22)', () => {
+  const tb = readToyBundle()
+  const tp = toyPlayerDoc()
+  const tee = { x: tb.meta.tee_xy[0], y: tb.meta.tee_xy[1] }
+  const lie = tb.lie[5] as Lie
+  const club = tp.club_order[0]
+
+  it('hits the first shot with the given club and direction, then follows the grid', () => {
+    const first = { club, dir_deg: 25 }
+    const run = playOut(tb, tp, tee, lie, 'drop', mulberry32(3), first)
+    expect(run.shots[0].club).toBe(club)
+    expect(run.shots[0].dir_deg).toBe(25)
+    expect(run.shots[0].to.x).toBeGreaterThan(tee.x) // 25 degrees right of the pin line
+    const free = playOut(tb, tp, tee, lie, 'drop', mulberry32(3))
+    expect(free.shots[0].dir_deg).not.toBe(25)
+  })
+
+  it('the histogram takes the same first shot, and a wild aim costs strokes', () => {
+    const good = histogramMean(histogram(tb, tp, tee, lie, 'drop', 400, 7))
+    const wild = histogramMean(histogram(tb, tp, tee, lie, 'drop', 400, 7, { club, dir_deg: 80 }))
+    expect(wild).toBeGreaterThan(good + 0.3)
   })
 })

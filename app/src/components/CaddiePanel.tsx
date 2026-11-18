@@ -9,7 +9,8 @@ import { type ReactNode, useState } from 'react'
 import { lieAt, valueNearest } from '../lib/grid'
 import { clubDisplayName, MODE_LABEL } from '../lib/tokens'
 import type { Lie, LieName, Meta, Player, XY } from '../lib/types'
-import { useStore } from '../store'
+import { currentAim, currentOutcome, useStore } from '../store'
+import { AimChips, AimDetails, CaddiePick } from './AimPanel'
 import { LearnBadge } from './LearnBadge'
 import { PlayItOut } from './PlayItOut'
 import { ExportLogButton, ShotLogger } from './ShotLogger'
@@ -105,6 +106,8 @@ const ALL_PARTS = { logger: true, learn: true, playItOut: true }
 
 export function CaddiePanel({ parts = ALL_PARTS, emptyText = 'Tap the map to place the ball', notice, info, footer }: CaddiePanelProps) {
   const recommendation = useStore((s) => s.recommendation)
+  const aim = useStore(currentAim)
+  const outcome = useStore(currentOutcome)
   const ball = useStore((s) => s.ball)
   const bundle = useStore((s) => s.bundle)
   const player = useStore((s) => s.player)
@@ -118,7 +121,7 @@ export function CaddiePanel({ parts = ALL_PARTS, emptyText = 'Tap the map to pla
   const inHazard = lie === 6 || lie === 7
   const putts = bundle && ball && onGreen ? valueNearest(bundle, ball) : null
   const offsetYd =
-    recommendation && player && lie !== null ? aimOffsetYd(player, recommendation.club, lie, recommendation.dir_deg) : null
+    aim && player && lie !== null ? aimOffsetYd(player, aim.club, lie, aim.dir_deg) : null
 
   let body
   if (!bundle) {
@@ -143,22 +146,27 @@ export function CaddiePanel({ parts = ALL_PARTS, emptyText = 'Tap the map to pla
       </div>
     )
   } else if (recommendation) {
+    // Part 22: the club and the expected strokes are those of the aim in force. The pill is
+    // the recommendation colour only while that aim is the caddie's own.
+    const own = aim?.custom ?? false
+    const club = aim?.club ?? recommendation.club
+    const expected = own && outcome ? outcome.expected : recommendation.expected_strokes
     body = (
       <div className="grid grid-cols-3 gap-4">
         <Figure label="To pin" value={String(Math.round(toPinYd ?? 0))} unit="yd" />
         <div className="flex min-w-0 flex-col gap-1">
-          <span className="label">Club</span>
+          <span className="label">{own ? 'Your club' : 'Club'}</span>
           <span
-            className="inline-flex w-fit max-w-full items-center rounded-lg bg-rec px-3 py-1.5 leading-tight text-rec-ink"
+            className={`inline-flex w-fit max-w-full items-center rounded-lg px-3 py-1.5 leading-tight ${own ? 'bg-ink text-surface' : 'bg-rec text-rec-ink'}`}
             style={{ fontSize: 'var(--text-body)', fontWeight: 600 }}
             data-testid="club"
           >
-            {clubDisplayName(recommendation.club)}
+            {clubDisplayName(club)}
           </span>
         </div>
         <div className="flex min-w-0 flex-col gap-1">
-          <Figure label="Expected" value={recommendation.expected_strokes.toFixed(1)} accent />
-          {recommendation.baseline_pin_strokes !== undefined && (
+          <Figure label="Expected" value={expected.toFixed(1)} accent={!own} />
+          {!own && recommendation.baseline_pin_strokes !== undefined && (
             <span className="num text-caption text-ink-2" data-testid="baseline">
               Pin with {clubDisplayName(recommendation.club)}: {recommendation.baseline_pin_strokes.toFixed(1)}
             </span>
@@ -203,10 +211,13 @@ export function CaddiePanel({ parts = ALL_PARTS, emptyText = 'Tap the map to pla
         </div>
       )}
       {body}
+      <AimChips />
+      <CaddiePick />
       {parts.logger && <ShotLogger />}
 
       <div id="caddie-details" className={`${expanded ? 'flex' : 'hidden'} flex-col gap-3 pb-2 md:flex`}>
-        {recommendation && offsetYd !== null && (
+        <AimDetails />
+        {aim && offsetYd !== null && (
           <p className="num text-body text-ink" data-testid="aim">
             {aimText(offsetYd)}
           </p>

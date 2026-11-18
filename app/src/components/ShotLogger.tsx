@@ -8,14 +8,13 @@ import { type GeoJSONSource, type Map as MLMap, Marker } from 'maplibre-gl'
 import { useEffect, useRef, useState } from 'react'
 
 import { gridToLonLat, lonLatToGrid } from '../lib/geo'
-import { lieAt } from '../lib/grid'
 import { whenStyleReady } from '../lib/mapReady'
-import { TEE_ONLY_CLUBS } from '../lib/rollout'
 import type { LoggedShot } from '../lib/shotLog'
 import { type Dwell, exportFileName, exportLog, logKey, shouldPromptLanding, updateDwell } from '../lib/shotLog'
 import { clubDisplayName, token } from '../lib/tokens'
-import type { Lie, Meta, Player, XY } from '../lib/types'
-import { activeLog, useStore } from '../store'
+import type { Meta, XY } from '../lib/types'
+import { activeLog, currentAim, useStore } from '../store'
+import { chipText } from './AimPanel'
 import { insideGrid } from './BallMarker'
 import { toYards } from './CaddiePanel'
 
@@ -60,22 +59,7 @@ export function shotLabel(s: LoggedShot, index: number): string {
   return `${head}, ${Math.round(toYards(Math.hypot(s.end.x - s.start.x, s.end.y - s.start.y)))} yd`
 }
 
-const CHIP = 'num flex h-11 shrink-0 items-center rounded-lg px-3 text-caption font-medium transition-colors'
 const BUTTON = 'flex h-14 min-w-0 items-center justify-center rounded-lg px-3 text-body font-medium transition-colors'
-
-/** Short chip text: the club id as stamped on the stick ("7i", "PW", "SW 50"). */
-export function chipText(id: string): string {
-  const m = /^(sw|pw|lw|gw)(\d+)$/.exec(id)
-  if (m) return `${m[1].toUpperCase()} ${m[2]}`
-  if (id === 'driver') return 'Driver'
-  return /^(sw|pw|lw|gw)$/.test(id) ? id.toUpperCase() : id
-}
-
-/** The chips: the recommended club first, then the rest of the bag in order; tee-only clubs only on the tee. */
-export function chipClubs(player: Player, lie: Lie, recommended: string | null): string[] {
-  const bag = player.club_order.filter((id) => lie === 1 || !TEE_ONLY_CLUBS.includes(id))
-  return recommended && bag.includes(recommended) ? [recommended, ...bag.filter((id) => id !== recommended)] : bag
-}
 
 /**
  * Slice 8: with GPS on, true once the player has stood still for 20 s at least 20 m from the
@@ -108,82 +92,56 @@ export function ShotLogger() {
   const bundle = useStore((s) => s.bundle)
   const player = useStore((s) => s.player)
   const ball = useStore((s) => s.ball)
-  const lieOverride = useStore((s) => s.lieOverride)
   const recommendation = useStore((s) => s.recommendation)
+  const aim = useStore(currentAim)
   const log = useStore((s) => activeLog(s))
   const hitShot = useStore((s) => s.hitShot)
   const finishShot = useStore((s) => s.finishShot)
   const undoShot = useStore((s) => s.undoShot)
-  const [picked, setPicked] = useState<string | null>(null)
   const lastShot = log[log.length - 1]
-  const ballHere = useLandingPrompt(lastShot && lastShot.end === null ? lastShot.start : null)
-
-  // A new recommendation (the ball moved) puts the chips back on the recommended club.
-  const recClub = recommendation?.club ?? null
-  useEffect(() => setPicked(null), [recClub, ball])
+  const open = lastShot !== undefined && lastShot.end === null
+  const ballHere = useLandingPrompt(open ? lastShot.start : null)
 
   if (!bundle || !player) return null
-  const last = log[log.length - 1]
-  const open = last !== undefined && last.end === null
-  const lie = ball ? (lieOverride ?? lieAt(bundle, ball)) : null
-  const club = picked ?? recClub
-  const shown = lie !== null ? chipClubs(player, lie, recClub) : []
+  const club = aim?.club ?? recommendation?.club ?? null
   const canHit = recommendation !== null && ball !== null
+  const plain = `${BUTTON} border border-line bg-surface-2 text-ink`
 
   return (
     <div className="flex flex-col gap-2" data-testid="shot-logger">
-      {canHit && shown.length > 0 && (
-        <div className="-mx-4 flex gap-2 overflow-x-auto px-4" role="radiogroup" aria-label="Club for this shot">
-          {shown.map((id) => (
-            <button
-              key={id}
-              type="button"
-              role="radio"
-              aria-checked={id === club}
-              aria-label={clubDisplayName(id) + (id === recClub ? ' (recommended)' : '')}
-              className={`${CHIP} ${id === club ? 'bg-ink text-surface' : 'border border-line bg-surface-2 text-ink'}`}
-              onClick={() => setPicked(id)}
-            >
-              {chipText(id)}
-              {id === recClub && <span className="ml-1 h-1.5 w-1.5 rounded-full bg-rec" aria-hidden="true" />}
-            </button>
-          ))}
+      {open ? (
+        // The ball is in the air or being walked to: confirm where it finished (part 22).
+        <div className="flex gap-2">
+          <button
+            type="button"
+            disabled={ball === null}
+            className={`${BUTTON} flex-1 font-semibold disabled:opacity-40 ${ballHere ? 'bg-gps text-white' : 'bg-rec text-rec-ink'}`}
+            onClick={() => finishShot('normal')}
+            data-testid="ball-here"
+          >
+            Ball is here
+          </button>
+          <button type="button" className={plain} onClick={() => finishShot('green')}>
+            On the green
+          </button>
+          <button type="button" className={plain} onClick={() => finishShot('penalty')}>
+            Penalty
+          </button>
         </div>
-      )}
-      {ballHere && canHit && (
-        <button
-          type="button"
-          className={`${BUTTON} border border-gps bg-surface-2 text-ink`}
-          onClick={() => hitShot(club ?? undefined)}
-          data-testid="ball-here"
-        >
-          Ball here? Log the next shot
-        </button>
-      )}
-      <div className="flex gap-2">
+      ) : (
         <button
           type="button"
           disabled={!canHit}
-          className={`${BUTTON} flex-1 bg-rec font-semibold text-rec-ink disabled:opacity-40`}
-          onClick={() => hitShot(club ?? undefined)}
+          className={`${BUTTON} bg-rec font-semibold text-rec-ink disabled:opacity-40`}
+          onClick={() => hitShot()}
         >
           Hit{club && canHit ? ` ${chipText(club)}` : ''}
         </button>
-        {open && (
-          <>
-            <button type="button" className={`${BUTTON} border border-line bg-surface-2 text-ink`} onClick={() => finishShot('green')}>
-              On the green
-            </button>
-            <button type="button" className={`${BUTTON} border border-line bg-surface-2 text-ink`} onClick={() => finishShot('penalty')}>
-              Penalty
-            </button>
-          </>
-        )}
-      </div>
-      {last && (
+      )}
+      {lastShot && (
         <div className="flex h-11 items-center justify-between gap-2">
           <span className="num truncate text-caption text-ink-2" role="status">
-            {shotLabel(last, log.length - 1)}
+            {shotLabel(lastShot, log.length - 1)}
           </span>
           <button type="button" className="h-11 shrink-0 rounded-lg px-3 text-caption font-medium text-ink-2 underline" onClick={() => undoShot()}>
             Undo
